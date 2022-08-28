@@ -1913,7 +1913,7 @@ z_offset:
 #   See the "probe" section for more information on the parameters above.
 ```
 
-### [load_cell_probe]
+### ⚠️[load_cell_probe]
 
 Load-cell based probe. One may define this section (instead of a probe
 section) to enable a load-cell based probe. See

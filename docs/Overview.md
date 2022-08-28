@@ -29,7 +29,7 @@ communication with the Klipper developers.
   - [Probe calibrate](Probe_Calibrate.md): Calibration of automatic Z
     probes.
   - [BL-Touch](BLTouch.md): Configure a "BL-Touch" Z probe.
-  - [Load-cell probe](LoadCellProbe.md): Configure a load-cell based
+  - ⚠️[Load-cell probe](LoadCellProbe.md): Configure a load-cell based
     probe.
   - [Manual level](Manual_Level.md): Calibration of Z endstops (and
     similar).

@@ -348,7 +348,7 @@ is defined):
   template expansion, the PROBE (or similar) command must be run prior
   to the macro containing this reference.
 
-## load_cell_probe
+## ⚠️load_cell_probe
 
 The following information is available in the
 [load_cell_probe](Config_Reference.md#load_cell_probe):

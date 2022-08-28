@@ -1,4 +1,6 @@
-# Load-cell based probe
+# ⚠️Load-cell based probe
+
+!!! Note: This entire document is part of an unstable feature
 
 A load-cell based probe offers an offset-free measurement of the precise
 Z coordinate of the contact position between nozzle and print bed. Under certain
