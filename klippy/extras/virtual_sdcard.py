@@ -14,6 +14,7 @@ class VirtualSDGCodeProvider:
         self.reactor = self.printer.get_reactor()
         # sdcard state
         sd = config.get("path")
+        self.with_subdirs = config.getboolean("with_subdirs", False)
         self.sdcard_dirname = os.path.normpath(os.path.expanduser(sd))
         self.filename = ""
         self.current_file = None
@@ -172,7 +173,7 @@ class VirtualSDGCodeProvider:
         except:
             logging.exception("virtual_sdcard file open")
             raise gcmd.error("Unable to open file")
-        gcmd.respond_raw("File opened:%s Size:%d" % (filename, fsize))
+        gcmd.respond_raw("File opened: %s Size: %d" % (filename, fsize))
         gcmd.respond_raw("File selected")
         self.current_file = f
         self.file_position = 0
@@ -191,7 +192,7 @@ class VirtualSDGCodeProvider:
 
     def cmd_M20(self, gcmd):
         # List SD card
-        files = self.get_file_list()
+        files = self.get_file_list(self.with_subdirs)
         gcmd.respond_raw("Begin file list")
         for fname, fsize in files:
             gcmd.respond_raw("%s %d" % (fname, fsize))
