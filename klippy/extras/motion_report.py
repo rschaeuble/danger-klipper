@@ -161,7 +161,7 @@ class DumpStepper:
         )
         for i, s in enumerate(data):
             out.append(
-                "queue_step %d: t=%d p=%d i=%d c=%d a=%d"
+                "queue_step %d: t=%d p=%d i=%d c=%d a=%d a2=%d s=%d"
                 % (
                     i,
                     s.first_clock,
@@ -169,6 +169,8 @@ class DumpStepper:
                     s.interval,
                     s.step_count,
                     s.add,
+                    s.add2,
+                    s.shift,
                 )
             )
         logging.info("\n".join(out))
@@ -188,7 +190,7 @@ class DumpStepper:
         step_dist = self.mcu_stepper.get_step_dist()
         if self.mcu_stepper.get_dir_inverted()[0]:
             step_dist = -step_dist
-        d = [(s.interval, s.step_count, s.add) for s in data]
+        d = [(s.interval, s.step_count, s.add, s.add2, s.shift) for s in data]
         return {
             "data": d,
             "start_position": start_position,
@@ -202,7 +204,7 @@ class DumpStepper:
 
     def _add_api_client(self, web_request):
         self.api_dump.add_client(web_request)
-        hdr = ("interval", "count", "add")
+        hdr = ("interval", "count", "add", "add2", "shift")
         web_request.send({"header": hdr})
 
 
