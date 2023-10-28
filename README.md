@@ -46,15 +46,15 @@ If you're feeling adventurous, take a peek at the extra features in the bleeding
 
 - [dmbutyugin's advanced-features branch](https://github.com/DangerKlippers/danger-klipper/pull/69) [dmbutyugin/advanced-features](https://github.com/dmbutyugin/klipper/commits/advanced-features)
 
-  - [stepper: high precision stepping protocol]()
+  - [stepper: high precision stepping protocol](https://github.com/DangerKlippers/danger-klipper/pull/69)
 
-  - [extruder: sync extruder motion with input shaper]()
+  - [extruder: sync extruder motion with input shaper](https://github.com/DangerKlippers/danger-klipper/pull/69)
 
-  - [extruder: new print_pa_tower utility]()
+  - [extruder: new print_pa_tower utility](https://github.com/DangerKlippers/danger-klipper/pull/69)
 
-  - [input_shaper: smooth input shapers]()
+  - [input_shaper: smooth input shapers](https://github.com/DangerKlippers/danger-klipper/pull/69)
 
-  - [input_shaper: new print_ringing_tower utility]()
+  - [input_shaper: new print_ringing_tower utility](https://github.com/DangerKlippers/danger-klipper/pull/69)
 
 "Dangerous Klipper for dangerous users"
 
