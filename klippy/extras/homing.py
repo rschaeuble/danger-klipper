@@ -50,6 +50,7 @@ class HomingMove:
         self.toolhead = toolhead
         self.stepper_positions = []
         self.distance_elapsed = []
+        self.danger_options = printer.lookup_object("danger_options")
 
     def get_mcu_endstops(self):
         return [es for es, name in self.endstops]
@@ -197,6 +198,25 @@ class HomingMove:
                 return sp.endstop_name
         return None
 
+    def moved_less_than_dist(self, min_dist, homing_axes):
+        homing_axis_distances = [
+            dist
+            for i, dist in enumerate(self.distance_elapsed)
+            if i in homing_axes
+        ]
+        distance_tolerance = (
+            self.danger_options.homing_elapsed_distance_tolerance
+        )
+        if any(
+            [
+                abs(dist) < min_dist
+                and min_dist - abs(dist) >= distance_tolerance
+                for dist in homing_axis_distances
+            ]
+        ):
+            return True
+        return False
+
 
 # State tracking of homing requests
 class Homing:
@@ -240,9 +260,9 @@ class Homing:
 
         for rail in affected_rails:
             ch = rail.get_tmc_current_helper()
-            if ch is not None:
+            if ch is not None and ch.needs_home_current_change():
                 ch.set_current_for_homing(print_time)
-                self.toolhead.dwell(0.5)
+                self.toolhead.dwell(ch.current_change_dwell_time)
 
     def _set_current_post_homing(self, homing_axes):
         print_time = self.toolhead.get_last_move_time()
@@ -254,9 +274,9 @@ class Homing:
 
         for rail in affected_rails:
             ch = rail.get_tmc_current_helper()
-            if ch is not None:
+            if ch is not None and ch.needs_home_current_change():
                 ch.set_current_for_normal(print_time)
-                self.toolhead.dwell(0.5)
+                self.toolhead.dwell(ch.current_change_dwell_time)
 
     def home_rails(self, rails, forcepos, movepos):
         # Notify of upcoming homing operation
@@ -275,31 +295,26 @@ class Homing:
 
         hmove.homing_move(homepos, hi.speed)
 
-        homing_axis_distances = [
-            dist
-            for i, dist in enumerate(hmove.distance_elapsed)
-            if i in homing_axes
-        ]
+        needs_rehome = False
+        retract_dist = hi.retract_dist
+        if hmove.moved_less_than_dist(hi.min_home_dist, homing_axes):
+            needs_rehome = True
+            retract_dist = hi.min_home_dist
 
         # Perform second home
-        if hi.retract_dist:
-            needs_rehome = False
-            if any([dist < hi.retract_dist for dist in homing_axis_distances]):
-                needs_rehome = True
-
+        if retract_dist:
             logging.info("needs rehome: %s", needs_rehome)
             # Retract
             startpos = self._fill_coord(forcepos)
             homepos = self._fill_coord(movepos)
             axes_d = [hp - sp for hp, sp in zip(homepos, startpos)]
             move_d = math.sqrt(sum([d * d for d in axes_d[:3]]))
-            retract_r = min(1.0, hi.retract_dist / move_d)
+            retract_r = min(1.0, retract_dist / move_d)
             retractpos = [
                 hp - ad * retract_r for hp, ad in zip(homepos, axes_d)
             ]
             self.toolhead.move(retractpos, hi.retract_speed)
             if not hi.use_sensorless_homing or needs_rehome:
-                self.toolhead.dwell(0.5)
                 # Home again
                 startpos = [
                     rp - ad * retract_r for rp, ad in zip(retractpos, axes_d)
@@ -309,6 +324,7 @@ class Homing:
                 for endstop in endstops:
                     # re-querying a tmc endstop seems to reset the state
                     # otherwise it triggers almost immediately upon second home
+                    # this seems to be an adequate substitute for a 2 second dwell.
                     endstop[0].query_endstop(print_time)
                 hmove = HomingMove(self.printer, endstops)
                 hmove.homing_move(homepos, hi.second_homing_speed)
@@ -317,17 +333,27 @@ class Homing:
                         "Endstop %s still triggered after retract"
                         % (hmove.check_no_movement(),)
                     )
-
-                # Retract (again)
-                startpos = self._fill_coord(forcepos)
-                homepos = self._fill_coord(movepos)
-                axes_d = [hp - sp for hp, sp in zip(homepos, startpos)]
-                move_d = math.sqrt(sum([d * d for d in axes_d[:3]]))
-                retract_r = min(1.0, hi.retract_dist / move_d)
-                retractpos = [
-                    hp - ad * retract_r for hp, ad in zip(homepos, axes_d)
-                ]
-                self.toolhead.move(retractpos, hi.retract_speed)
+                if (
+                    hi.use_sensorless_homing
+                    and needs_rehome
+                    and hmove.moved_less_than_dist(
+                        hi.min_home_dist, homing_axes
+                    )
+                ):
+                    raise self.printer.command_error(
+                        "Early homing trigger on second home!"
+                    )
+                if hi.retract_dist:
+                    # Retract (again)
+                    startpos = self._fill_coord(forcepos)
+                    homepos = self._fill_coord(movepos)
+                    axes_d = [hp - sp for hp, sp in zip(homepos, startpos)]
+                    move_d = math.sqrt(sum([d * d for d in axes_d[:3]]))
+                    retract_r = min(1.0, hi.retract_dist / move_d)
+                    retractpos = [
+                        hp - ad * retract_r for hp, ad in zip(homepos, axes_d)
+                    ]
+                    self.toolhead.move(retractpos, hi.retract_speed)
         self._set_current_post_homing(homing_axes)
         # Signal home operation complete
         self.toolhead.flush_step_generation()

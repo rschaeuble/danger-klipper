@@ -73,30 +73,43 @@ pins such as "extra_mcu:ar9" may then be used elsewhere in the config
 [mcu my_extra_mcu]
 # See the "mcu" section for configuration parameters.
 ```
+
 ## ⚠️ Danger Options
+
 A collection of DangerKlipper-specific system options
+
 ```
 [danger_options]
-
-# If an unused config option or section should cause an error
-# if False, will warn but allow klipper to still run
-error_on_unused_config_options: True
-
-# If statistics should be logged
-# (helpful for keeping the log clean during development)
-log_statistics: True
-
-# If the config file should be logged at startup
-log_config_file_at_startup: True
-
-# If the bed mesh should be logged on startup
-# (helpful for keeping the log clean during development)
-log_bed_mesh_at_startup: True
-
-# If we should log detailed crash info when an exception occurs
-# Most of it is overly-verbose and fluff and we still get a stack trace
-# for normal exceptions, so setting to False can help save time while developing
-log_shutdown_info: True
+#error_on_unused_config_options: True
+#   If an unused config option or section should cause an error
+#   if False, will warn but allow klipper to still run.
+#   The default is True.
+#log_statistics: True
+#   If statistics should be logged
+#   (helpful for keeping the log clean during development)
+#   The default is True.
+#log_config_file_at_startup: True
+#   If the config file should be logged at startup
+#   The default is True.
+#log_bed_mesh_at_startup: True
+#   If the bed mesh should be logged on startup
+#   (helpful for keeping the log clean during development)
+#   The default is True.
+#log_shutdown_info: True
+#   If we should log detailed crash info when an exception occurs
+#   Most of it is overly-verbose and fluff and we still get a stack trace
+#   for normal exceptions, so setting to False can help save time while developing
+#   The default is True.
+#allow_plugin_override: False
+#   Allows modules in `plugins` to override modules of the same name in `extras`
+#   The default is False.
+#multi_mcu_trsync_timeout: 0.025
+#   The timeout (in seconds) for MCU synchronization during the homing process when
+#   multiple MCUs are in use. The default is 0.025
+#homing_elapsed_distance_tolerance: 0.5
+#   Tolerance (in mm) for distance moved in the second homing. Ensures the
+#   second homing distance closely matches the `min_home_dist` when using
+#   sensorless homing. The default is 0.5mm.
 ```
 
 ## Common kinematic settings
@@ -212,6 +225,11 @@ position_max:
 #   Speed to use on the retract move after homing in case this should
 #   be different from the homing speed, which is the default for this
 #   parameter
+#min_home_dist:
+#   Minimum distance (in mm) for toolhead before sensorless homing. If closer
+#   than `min_home_dist` to endstop, it moves away to this distance, then homes.
+#   If further, it directly homes and retracts to `homing_retract_dist`.
+#   The default is equal to `homing_retract_dist`.
 #second_homing_speed:
 #   Velocity (in mm/s) of the stepper when performing the second home.
 #   The default is homing_speed/2.
@@ -354,7 +372,7 @@ example deltesian kinematics config file.
 
 Only parameters specific to deltesian printers are described here - see
 [common kinematic settings](#common-kinematic-settings) for available
- parameters.
+parameters.
 
 ```
 [printer]
@@ -903,6 +921,7 @@ See the [bed mesh guide](Bed_Mesh.md) and
 [command reference](G-Codes.md#bed_mesh) for additional information.
 
 Visual Examples:
+
 ```
  rectangular bed, probe_count = 3, 3:
              x---x---x (max_point)
@@ -1156,15 +1175,7 @@ extended [G-Code command](G-Codes.md#z_tilt) becomes available.
 #   stepper. It is described using nozzle coordinates (the X, Y position
 #   of the nozzle if it could move directly above the point). The
 #   first entry corresponds to stepper_z, the second to stepper_z1,
-#   the third to stepper_z2, etc. This parameter must be provided,
-#   unless the parameter "extra_points" is provided. In that case only
-#   the command Z_TILT_AUTODETECT can be run to automatically determine
-#   the z_positions. See 'extra_points' below.
-#z_offsets:
-#   A list of Z offsets for each z_position. The z_offset is added to each
-#   probed value during Z_TILT_ADJUST to offset for unevenness of the bed.
-#   This values can also be automatically detected by running
-#   Z_TILT_CALIBRATE. See "extra_points" below.
+#   the third to stepper_z2, etc. This parameter must be provided.
 #points:
 #   A list of X, Y coordinates (one per line; subsequent lines
 #   indented) that should be probed during a Z_TILT_ADJUST command.
@@ -1187,6 +1198,30 @@ extended [G-Code command](G-Codes.md#z_tilt) becomes available.
 #   more points than steppers then you will likely have a fixed
 #   minimum value for the range of probed points which you can learn
 #   by observing command output.
+```
+
+```
+[z_tilt_ng]
+#z_positions:
+# See [z_tilt]. This parameter must be provided,
+#   unless the parameter "extra_points" is provided. In that case only
+#   the command Z_TILT_AUTODETECT can be run to automatically determine
+#   the z_positions. See 'extra_points' below.
+#z_offsets:
+#   A list of Z offsets for each z_position. The z_offset is added to each
+#   probed value during Z_TILT_ADJUST to offset for unevenness of the bed.
+#   This values can also be automatically detected by running
+#   Z_TILT_CALIBRATE. See "extra_points" below.
+#points:
+# See [z_tilt]
+#speed: 50
+# See [z_tilt]
+#horizontal_move_z: 5
+# See [z_tilt]
+#retries: 0
+# See [z_tilt]
+#retry_tolerance: 0
+# See [z_tilt]
 #extra_points:
 #   A list in the same format as "points" above. This list contains
 #   additional points to be probed during the two calibration commands
@@ -1223,6 +1258,7 @@ WARNING: Using this on a moving bed may lead to undesirable results.
 If this section is present then a QUAD_GANTRY_LEVEL extended G-Code
 command becomes available. This routine assumes the following Z motor
 configuration:
+
 ```
  ----------------
  |Z1          Z2|
@@ -1233,6 +1269,7 @@ configuration:
  |Z           Z3|
  ----------------
 ```
+
 Where x is the 0, 0 point on the bed
 
 ```
@@ -1577,17 +1614,35 @@ allowing per-filament settings and runtime tuning.
 
 ```
 [firmware_retraction]
-#retract_length: 0
-#   The length of filament (in mm) to retract when G10 is activated,
-#   and to unretract when G11 is activated (but see
-#   unretract_extra_length below). The default is 0 mm.
-#retract_speed: 20
-#   The speed of retraction, in mm/s. The default is 20 mm/s.
-#unretract_extra_length: 0
-#   The length (in mm) of *additional* filament to add when
-#   unretracting.
-#unretract_speed: 10
-#   The speed of unretraction, in mm/s. The default is 10 mm/s.
+#retract_length: 0.0
+#   The length of filament (in mm) to retract when a G10 command is
+#   executed. When a G11 command is executed, the unretract_length
+#   is the sum of the retract_length and the unretract_extra_length
+#   (see below). The minimum value and default are 0 mm, which
+#   disables firmware retraction.
+#retract_speed: 20.0
+#   The speed of filament retraction moves (in mm/s).
+#   This value is typically set relatively high (>40 mm/s),
+#   except for soft and/oozy filaments like TPU and PETG
+#   (20 to 30 mm/s). The minimum value is 1 mm/s, the default value
+#   is 20 mm/s.
+#unretract_extra_length: 0.0
+#   The *additional* length (in mm) to add or the length to subtract
+#   from the filament move when unretracting compared to the retract
+#   move length. This allows priming the nozzle (positive extra length)
+#   or delaying extrusion after unretracting (negative length). The
+#   latter may help reduce blobbing. The minimum value is -1 mm
+#   (2.41 mm3 volume for 1.75 mm filament), the default value is 0 mm.
+#unretract_speed: 10.0
+#   The speed of filament unretraction moves (in mm/s).
+#   This parameter is not particularly critical, although often lower
+#   than retract_speed. The minimum value is 1 mm/s, the default value
+#   is 10 mm/s.
+#z_hop_height: 0.0
+#   The vertical height by which the nozzle is lifted from the print to
+#   prevent collisions with the print during travel moves when retracted.
+#   The minimum value is 0 mm, the default value is 0 mm, which disables
+#   zhop moves.
 ```
 
 ### [gcode_arcs]
@@ -1623,6 +1678,7 @@ Enable the "M118" and "RESPOND" extended
 ```
 
 ### [exclude_object]
+
 Enables support to exclude or cancel individual objects during the printing
 process.
 
@@ -1839,7 +1895,7 @@ aliases_<name>:
 
 Include file support. One may include additional config file from the
 main printer config file. Wildcards may also be used (eg,
-"configs/*.cfg").
+"configs/\*.cfg").
 
 ```
 [include my_other_config.cfg]
@@ -2790,6 +2846,8 @@ monitor these temperatures.
 sensor_type: temperature_mcu
 #sensor_mcu: mcu
 #   The micro-controller to read from. The default is "mcu".
+#reference_voltage:
+#   The reference voltage for the ADC of the mcu. Default is 3.3
 #sensor_temperature1:
 #sensor_adc1:
 #   Specify the above two parameters (a temperature in Celsius and an
@@ -3438,6 +3496,9 @@ run_current:
 #home_current:
 #   The amount of current (in amps RMS) to configure the driver to use
 #   during homing procedures. The default is to not reduce the current.
+#current_change_dwell_time:
+#   The amount of time (in seconds) to wait after changing homing current.
+#   The default is 0.5 seconds.
 #sense_resistor: 0.110
 #   The resistance (in ohms) of the motor sense resistor. The default
 #   is 0.110 ohms.
@@ -3534,6 +3595,9 @@ run_current:
 #home_current:
 #   The amount of current (in amps RMS) to configure the driver to use
 #   during homing procedures. The default is to not reduce the current.
+#current_change_dwell_time:
+#   The amount of time (in seconds) to wait after changing homing current.
+#   The default is 0.5 seconds.
 #sense_resistor: 0.110
 #   The resistance (in ohms) of the motor sense resistor. The default
 #   is 0.110 ohms.
@@ -3578,6 +3642,7 @@ uart_pin:
 run_current:
 #hold_current:
 #home_current:
+#current_change_dwell_time:
 #sense_resistor: 0.110
 #stealthchop_threshold: 0
 #   See the "tmc2208" section for the definition of these parameters.
@@ -3649,6 +3714,9 @@ run_current:
 #home_current:
 #   The amount of current (in amps RMS) to configure the driver to use
 #   during homing procedures. The default is to not reduce the current.
+#current_change_dwell_time:
+#   The amount of time (in seconds) to wait after changing homing current.
+#   The default is 0.5 seconds.
 #sense_resistor:
 #   The resistance (in ohms) of the motor sense resistor. This
 #   parameter must be provided.
@@ -3732,6 +3800,9 @@ run_current:
 #home_current:
 #   The amount of current (in amps RMS) to configure the driver to use
 #   during homing procedures. The default is to not reduce the current.
+#current_change_dwell_time:
+#   The amount of time (in seconds) to wait after changing homing current.
+#   The default is 0.5 seconds.
 #rref: 12000
 #   The resistance (in ohms) of the resistor between IREF and GND. The
 #   default is 12000.
@@ -3856,6 +3927,9 @@ run_current:
 #home_current:
 #   The amount of current (in amps RMS) to configure the driver to use
 #   during homing procedures. The default is to not reduce the current.
+#current_change_dwell_time:
+#   The amount of time (in seconds) to wait after changing homing current.
+#   The default is 0.5 seconds.
 #sense_resistor: 0.075
 #   The resistance (in ohms) of the motor sense resistor. The default
 #   is 0.075 ohms.
@@ -4826,8 +4900,8 @@ Octoprint as they will conflict, and 1 will fail to initialize
 properly likely aborting your print.
 
 If you use Octoprint and stream gcode over the serial port instead of
-printing from virtual_sd, then remo **M1** and **M0** from *Pausing commands*
-in *Settings > Serial Connection > Firmware & protocol* will prevent
+printing from virtual_sd, then remo **M1** and **M0** from _Pausing commands_
+in _Settings > Serial Connection > Firmware & protocol_ will prevent
 the need to start print on the Palette 2 and unpausing in Octoprint
 for your print to begin.
 
@@ -4850,7 +4924,7 @@ serial:
 ### [angle]
 
 Magnetic hall angle sensor support for reading stepper motor angle
-shaft measurements using a1333, as5047d, or tle5012b SPI chips.  The
+shaft measurements using a1333, as5047d, or tle5012b SPI chips. The
 measurements are available via the [API Server](API_Server.md) and
 [motion analysis tool](Debugging.md#motion-analysis-and-data-logging).
 See the [G-Code reference](G-Codes.md#angle) for available commands.
@@ -4918,8 +4992,8 @@ It is generally recommended to only use I2C devices that are on the
 same printed circuit board as the micro-controller.
 
 Most Klipper micro-controller implementations only support an
-`i2c_speed` of 100000 (*standard mode*, 100kbit/s). The Klipper "Linux"
-micro-controller supports a 400000 speed (*fast mode*, 400kbit/s), but it must be
+`i2c_speed` of 100000 (_standard mode_, 100kbit/s). The Klipper "Linux"
+micro-controller supports a 400000 speed (_fast mode_, 400kbit/s), but it must be
 [set in the operating system](RPi_microcontroller.md#optional-enabling-i2c)
 and the `i2c_speed` parameter is otherwise ignored. The Klipper
 "RP2040" micro-controller and ATmega AVR family support a rate of 400000
