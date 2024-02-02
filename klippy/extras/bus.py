@@ -38,6 +38,7 @@ def resolve_bus_name(mcu, param, bus):
 # SPI
 ######################################################################
 
+
 # Helper code for working with devices connected to an MCU via an SPI bus
 class MCU_SPI:
     def __init__(
@@ -45,15 +46,11 @@ class MCU_SPI:
     ):
         self.mcu = mcu
         self.bus = bus
+        self.pin = pin
+        self.cs_active_high = cs_active_high
         # Config SPI object (set all CS pins high before spi_set_bus commands)
         self.oid = mcu.create_oid()
-        if pin is None:
-            mcu.add_config_cmd("config_spi_without_cs oid=%d" % (self.oid,))
-        else:
-            mcu.add_config_cmd(
-                "config_spi oid=%d pin=%s cs_active_high=%d"
-                % (self.oid, pin, cs_active_high)
-            )
+
         # Generate SPI bus config message
         if sw_pins is not None:
             self.config_fmt = (
@@ -87,6 +84,13 @@ class MCU_SPI:
         return self.cmd_queue
 
     def build_config(self):
+        if self.pin is None:
+            mcu.add_config_cmd("config_spi_without_cs oid=%d" % (self.oid,))
+        else:
+            mcu.add_config_cmd(
+                "config_spi oid=%d pin=%s cs_active_high=%d"
+                % (self.oid, self.pin, self.cs_active_high)
+            )
         if "%" in self.config_fmt:
             bus = resolve_bus_name(self.mcu, "spi_bus", self.bus)
             self.config_fmt = self.config_fmt % (bus,)
@@ -175,6 +179,7 @@ def MCU_SPI_from_config(
 ######################################################################
 # I2C
 ######################################################################
+
 
 # Helper code for working with devices connected to an MCU via an I2C bus
 class MCU_I2C:
@@ -296,6 +301,7 @@ def MCU_I2C_from_config(config, default_addr=None, default_speed=100000):
 ######################################################################
 # Bus synchronized digital outputs
 ######################################################################
+
 
 # Helper code for a gpio that updates on a cmd_queue
 class MCU_bus_digital_out:
