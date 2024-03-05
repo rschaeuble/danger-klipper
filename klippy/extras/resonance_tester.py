@@ -127,7 +127,7 @@ class VibrationPulseTest:
         self.min_freq = config.getfloat("min_freq", 5.0, minval=1.0)
         # Defaults are such that max_freq * accel_per_hz == 10000 (max_accel)
         self.max_freq = config.getfloat(
-            "max_freq", 10000.0 / 75.0, minval=self.min_freq, maxval=200.0
+            "max_freq", 10000.0 / 75.0, minval=self.min_freq, maxval=500.0
         )
         self.accel_per_hz = config.getfloat("accel_per_hz", 75.0, above=0.0)
         self.hz_per_sec = config.getfloat(
