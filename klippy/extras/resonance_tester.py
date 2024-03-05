@@ -146,7 +146,7 @@ class VibrationPulseTest:
             "FREQ_START", self.min_freq, minval=1.0
         )
         self.freq_end = gcmd.get_float(
-            "FREQ_END", self.max_freq, minval=self.freq_start, maxval=200.0
+            "FREQ_END", self.max_freq, minval=self.freq_start, maxval=500.0
         )
         self.hz_per_sec = gcmd.get_float(
             "HZ_PER_SEC", self.hz_per_sec, above=0.0, maxval=2.0
