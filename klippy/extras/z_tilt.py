@@ -162,6 +162,7 @@ class ZTilt:
         self.z_positions = config.getlists(
             "z_positions", seps=(",", "\n"), parser=float, count=2
         )
+        self.use_adjustments = config.getboolean("use_adjustments", False)
         self.retry_helper = RetryHelper(config)
         self.probe_helper = probe.ProbePointsHelper(config, self.probe_finalize)
         self.probe_helper.minimum_points(2)
@@ -187,6 +188,7 @@ class ZTilt:
         z_offset = offsets[2]
         logging.info("Calculating bed tilt with: %s", positions)
         params = {"x_adjust": 0.0, "y_adjust": 0.0, "z_adjust": z_offset}
+
         # Perform coordinate descent
         def adjusted_height(pos, params):
             x, y, z = pos
@@ -221,6 +223,10 @@ class ZTilt:
             x * x_adjust + y * y_adjust + z_adjust for x, y in self.z_positions
         ]
         self.z_helper.adjust_steppers(adjustments, speed)
+        if self.use_adjustments:
+            return self.z_status.check_retry_result(
+                self.retry_helper.check_retry(adjustments)
+            )
         return self.z_status.check_retry_result(
             self.retry_helper.check_retry([p[2] for p in positions])
         )
