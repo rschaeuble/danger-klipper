@@ -326,15 +326,15 @@ class MCU_endstop:
         trsync.add_stepper(stepper)
         # Check for unsupported multi-mcu shared stepper rails
         sname = stepper.get_name()
-        if sname.startswith("stepper_"):
-            for ot in self._trsyncs:
-                for s in ot.get_steppers():
-                    if ot is not trsync and s.get_name().startswith(sname[:9]):
-                        cerror = self._mcu.get_printer().config_error
-                        raise cerror(
-                            "Multi-mcu homing not supported on"
-                            " multi-mcu shared axis"
-                        )
+        # if sname.startswith("stepper_"):
+        #     for ot in self._trsyncs:
+        #         for s in ot.get_steppers():
+        #             if ot is not trsync and s.get_name().startswith(sname[:9]):
+        #                 cerror = self._mcu.get_printer().config_error
+        #                 raise cerror(
+        #                     "Multi-mcu homing not supported on"
+        #                     " multi-mcu shared axis"
+        #                 )
 
     def get_steppers(self):
         return [s for trsync in self._trsyncs for s in trsync.get_steppers()]
