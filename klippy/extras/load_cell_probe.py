@@ -6,12 +6,6 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 import mathutil
-import sys
-
-syspath = sys.path
-sys.path = syspath[1:]
-
-sys.path = syspath
 
 ###########################
 # Configuration constants #

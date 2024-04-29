@@ -4471,10 +4471,6 @@ lcd_type:
 #   See the display sections below for information on each type and
 #   additional parameters they provide. This parameter must be
 #   provided.
-#line_length:
-#   Set the number of characters per line for an hd44780 type lcd.
-#   Possible values are 20 (default) and 16. The number of lines is
-#   fixed to 4.
 #display_group:
 #   The name of the display_data group to show on the display. This
 #   controls the content of the screen (see the "display_data" section
