@@ -271,7 +271,7 @@ class LoadCellProbe:
 
     def _move_z_relative(self, length, wait=True):
         pos = self.tool.get_position()
-        self.tool.manual_move([pos[0], pos[1], pos[2] + length], SPEED)
+        self.tool.manual_move([pos[0], pos[1], pos[2] + length], self.speed)
         if wait:
             self.tool.wait_moves()
 
