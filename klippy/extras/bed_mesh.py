@@ -1,11 +1,11 @@
 # Mesh Bed Leveling
 #
-# Copyright (C) 2018  Kevin O'Connor <kevin@koconnor.net>
 # Copyright (C) 2018-2019 Eric Callahan <arksine.code@gmail.com>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging, math, json, collections
 from . import probe
+from extras.danger_options import get_danger_options
 
 PROFILE_VERSION = 1
 PROFILE_OPTIONS = {
@@ -114,6 +114,7 @@ class BedMesh:
         self.printer.register_event_handler(
             "klippy:connect", self.handle_connect
         )
+        config_file = self.printer.lookup_object("configfile")
         self.last_position = [0.0, 0.0, 0.0, 0.0]
         self.bmc = BedMeshCalibrate(config, self)
         self.z_mesh = None
@@ -127,11 +128,22 @@ class BedMesh:
         self.log_fade_complete = False
         self.base_fade_target = config.getfloat("fade_target", None)
         self.fade_target = 0.0
+        self.tool_offset = 0.0
         self.gcode = self.printer.lookup_object("gcode")
         self.splitter = MoveSplitter(config, self.gcode)
         # setup persistent storage
         self.pmgr = ProfileManager(config, self)
         self.save_profile = self.pmgr.save_profile
+        self.default_mesh_name = config.get("bed_mesh_default", None)
+        if self.default_mesh_name:
+            if self.default_mesh_name in self.pmgr.get_profiles():
+                self.pmgr.load_profile(self.default_mesh_name)
+            else:
+                config_file.warn(
+                    "config",
+                    f"Selected default bed mesh profile '{self.default_mesh_name}' not in available profiles.",
+                    "Invalid profile name",
+                )
         # register gcodes
         self.gcode.register_command(
             "BED_MESH_OUTPUT",
@@ -161,14 +173,14 @@ class BedMesh:
 
     def handle_connect(self):
         self.toolhead = self.printer.lookup_object("toolhead")
-        self.bmc.print_generated_points(logging.info)
-        self.pmgr.initialize()
+        if get_danger_options().log_bed_mesh_at_startup:
+            self.bmc.print_generated_points(logging.info)
 
     def set_mesh(self, mesh):
         if mesh is not None and self.fade_end != self.FADE_DISABLE:
             self.log_fade_complete = True
             if self.base_fade_target is None:
-                self.fade_target = mesh.avg_z
+                self.fade_target = mesh.get_z_average()
             else:
                 self.fade_target = self.base_fade_target
                 min_z, max_z = mesh.get_z_range()
@@ -197,6 +209,7 @@ class BedMesh:
                 )
         else:
             self.fade_target = 0.0
+        self.tool_offset = 0.0
         self.z_mesh = mesh
         self.splitter.initialize(mesh, self.fade_target)
         # cache the current position before a transform takes place
@@ -205,6 +218,7 @@ class BedMesh:
         self.update_status()
 
     def get_z_factor(self, z_pos):
+        z_pos += self.tool_offset
         if z_pos >= self.fade_end:
             return 0.0
         elif z_pos >= self.fade_start:
@@ -224,14 +238,15 @@ class BedMesh:
             max_adj = self.z_mesh.calc_z(x, y)
             factor = 1.0
             z_adj = max_adj - self.fade_target
-            if min(z, (z - max_adj)) >= self.fade_end:
+            fade_z_pos = z + self.tool_offset
+            if min(fade_z_pos, (fade_z_pos - max_adj)) >= self.fade_end:
                 # Fade out is complete, no factor
                 factor = 0.0
-            elif max(z, (z - max_adj)) >= self.fade_start:
+            elif max(fade_z_pos, (fade_z_pos - max_adj)) >= self.fade_start:
                 # Likely in the process of fading out adjustment.
                 # Because we don't yet know the gcode z position, use
                 # algebra to calculate the factor from the toolhead pos
-                factor = (self.fade_end + self.fade_target - z) / (
+                factor = (self.fade_end + self.fade_target - fade_z_pos) / (
                     self.fade_dist - z_adj
                 )
                 factor = constrain(factor, 0.0, 1.0)
@@ -281,7 +296,7 @@ class BedMesh:
             mesh_max = (params["max_x"], params["max_y"])
             probed_matrix = self.z_mesh.get_probed_matrix()
             mesh_matrix = self.z_mesh.get_mesh_matrix()
-            self.status["profile_name"] = self.pmgr.get_current_profile()
+            self.status["profile_name"] = self.z_mesh.get_profile_name()
             self.status["mesh_min"] = mesh_min
             self.status["mesh_max"] = mesh_max
             self.status["probed_matrix"] = probed_matrix
@@ -329,10 +344,19 @@ class BedMesh:
             for i, axis in enumerate(["X", "Y"]):
                 offsets[i] = gcmd.get_float(axis, None)
             self.z_mesh.set_mesh_offsets(offsets)
+            tool_offset = gcmd.get_float("ZFADE", None)
+            if tool_offset is not None:
+                self.tool_offset = tool_offset
             gcode_move = self.printer.lookup_object("gcode_move")
             gcode_move.reset_last_position()
         else:
             gcmd.respond_info("No mesh loaded to offset")
+
+
+class ZrefMode:
+    DISABLED = 0  # Zero reference disabled
+    IN_MESH = 1  # Zero reference position within mesh
+    PROBE = 2  # Zero refrennce position outside of mesh, probe needed
 
 
 class BedMeshCalibrate:
@@ -343,18 +367,18 @@ class BedMeshCalibrate:
         self.orig_config = {"radius": None, "origin": None}
         self.radius = self.origin = None
         self.mesh_min = self.mesh_max = (0.0, 0.0)
-        self.relative_reference_index = config.getint(
-            "relative_reference_index", None
+        self.adaptive_margin = config.getfloat("adaptive_margin", 0.0)
+        self.zero_ref_pos = config.getfloatlist(
+            "zero_reference_position", None, count=2
         )
+        self.zero_reference_mode = ZrefMode.DISABLED
         self.faulty_regions = []
         self.substituted_indices = collections.OrderedDict()
-        self.orig_config["rri"] = self.relative_reference_index
         self.bedmesh = bedmesh
         self.mesh_config = collections.OrderedDict()
         self._init_mesh_config(config)
         self._generate_points(config.error)
-        self._profile_name = None
-        self.orig_points = self.points
+        self._profile_name = "default"
         self.probe_helper = probe.ProbePointsHelper(
             config, self.probe_finalize, self._get_adjusted_points()
         )
@@ -367,7 +391,7 @@ class BedMeshCalibrate:
             desc=self.cmd_BED_MESH_CALIBRATE_help,
         )
 
-    def _generate_points(self, error):
+    def _generate_points(self, error, probe_method="automatic"):
         x_cnt = self.mesh_config["x_count"]
         y_cnt = self.mesh_config["y_count"]
         min_x, min_y = self.mesh_min
@@ -377,7 +401,7 @@ class BedMeshCalibrate:
         # floor distances down to next hundredth
         x_dist = math.floor(x_dist * 100) / 100
         y_dist = math.floor(y_dist * 100) / 100
-        if x_dist <= 1.0 or y_dist <= 1.0:
+        if x_dist < 1.0 or y_dist < 1.0:
             raise error("bed_mesh: min/max points too close together")
 
         if self.radius is not None:
@@ -411,9 +435,36 @@ class BedMeshCalibrate:
                         )
             pos_y += y_dist
         self.points = points
+        if self.zero_ref_pos is None or probe_method == "manual":
+            # Zero Reference Disabled
+            self.zero_reference_mode = ZrefMode.DISABLED
+        elif within(self.zero_ref_pos, self.mesh_min, self.mesh_max):
+            # Zero Reference position within mesh
+            self.zero_reference_mode = ZrefMode.IN_MESH
+        else:
+            # Zero Reference position outside of mesh
+            self.zero_reference_mode = ZrefMode.PROBE
         if not self.faulty_regions:
             return
+        self.substituted_indices.clear()
+        if self.zero_reference_mode == ZrefMode.PROBE:
+            # Cannot probe a reference within a faulty region
+            for min_c, max_c in self.faulty_regions:
+                if within(self.zero_ref_pos, min_c, max_c):
+                    opt = "zero_reference_position"
+                    raise error(
+                        "bed_mesh: Cannot probe zero reference position at "
+                        "(%.2f, %.2f) as it is located within a faulty region."
+                        " Check the value for option '%s'"
+                        % (
+                            self.zero_ref_pos[0],
+                            self.zero_ref_pos[1],
+                            opt,
+                        )
+                    )
         # Check to see if any points fall within faulty regions
+        if probe_method == "manual":
+            return
         last_y = self.points[0][1]
         is_reversed = False
         for i, coord in enumerate(self.points):
@@ -468,11 +519,10 @@ class BedMeshCalibrate:
             adj_pt = "(%.1f, %.1f)" % (x - x_offset, y - y_offset)
             mesh_pt = "(%.1f, %.1f)" % (x, y)
             print_func("  %-4d| %-16s| %s" % (i, adj_pt, mesh_pt))
-        if self.relative_reference_index is not None:
-            rri = self.relative_reference_index
+        if self.zero_ref_pos is not None:
             print_func(
-                "bed_mesh: relative_reference_index %d is (%.2f, %.2f)"
-                % (rri, self.points[rri][0], self.points[rri][1])
+                "bed_mesh: zero_reference_position is (%.2f, %.2f)"
+                % (self.zero_ref_pos[0], self.zero_ref_pos[1])
             )
         if self.substituted_indices:
             print_func("bed_mesh: faulty region points")
@@ -613,11 +663,148 @@ class BedMeshCalibrate:
                 )
                 params["algo"] = "lagrange"
 
+    def set_adaptive_mesh(self, gcmd):
+        if not gcmd.get_int("ADAPTIVE", 0):
+            return False
+        exclude_objects = self.printer.lookup_object("exclude_object", None)
+        if exclude_objects is None:
+            gcmd.respond_info("Exclude objects not enabled. Using full mesh...")
+            return False
+        objects = exclude_objects.get_status().get("objects", [])
+        if not objects:
+            return False
+        margin = gcmd.get_float("ADAPTIVE_MARGIN", self.adaptive_margin)
+
+        # List all exclude_object points by axis and iterate over
+        # all polygon points, and pick the min and max or each axis
+        list_of_xs = []
+        list_of_ys = []
+        gcmd.respond_info("Found %s objects" % (len(objects)))
+        for obj in objects:
+            for point in obj["polygon"]:
+                list_of_xs.append(point[0])
+                list_of_ys.append(point[1])
+
+        # Define bounds of adaptive mesh area
+        mesh_min = [min(list_of_xs), min(list_of_ys)]
+        mesh_max = [max(list_of_xs), max(list_of_ys)]
+        adjusted_mesh_min = [x - margin for x in mesh_min]
+        adjusted_mesh_max = [x + margin for x in mesh_max]
+
+        # Force margin to respect original mesh bounds
+        adjusted_mesh_min[0] = max(
+            adjusted_mesh_min[0], self.orig_config["mesh_min"][0]
+        )
+        adjusted_mesh_min[1] = max(
+            adjusted_mesh_min[1], self.orig_config["mesh_min"][1]
+        )
+        adjusted_mesh_max[0] = min(
+            adjusted_mesh_max[0], self.orig_config["mesh_max"][0]
+        )
+        adjusted_mesh_max[1] = min(
+            adjusted_mesh_max[1], self.orig_config["mesh_max"][1]
+        )
+
+        adjusted_mesh_size = (
+            adjusted_mesh_max[0] - adjusted_mesh_min[0],
+            adjusted_mesh_max[1] - adjusted_mesh_min[1],
+        )
+
+        # Compute a ratio between the adapted and original sizes
+        ratio = (
+            adjusted_mesh_size[0]
+            / (
+                self.orig_config["mesh_max"][0]
+                - self.orig_config["mesh_min"][0]
+            ),
+            adjusted_mesh_size[1]
+            / (
+                self.orig_config["mesh_max"][1]
+                - self.orig_config["mesh_min"][1]
+            ),
+        )
+
+        gcmd.respond_info(
+            "Original mesh bounds: (%s,%s)"
+            % (self.orig_config["mesh_min"], self.orig_config["mesh_max"])
+        )
+        gcmd.respond_info(
+            "Original probe count: (%s,%s)"
+            % (self.mesh_config["x_count"], self.mesh_config["y_count"])
+        )
+        gcmd.respond_info(
+            "Adapted mesh bounds: (%s,%s)"
+            % (adjusted_mesh_min, adjusted_mesh_max)
+        )
+        gcmd.respond_info("Ratio: (%s, %s)" % ratio)
+
+        new_x_probe_count = int(
+            math.ceil(self.mesh_config["x_count"] * ratio[0])
+        )
+        new_y_probe_count = int(
+            math.ceil(self.mesh_config["y_count"] * ratio[1])
+        )
+
+        # There is one case, where we may have to adjust the probe counts:
+        # axis0 < 4 and axis1 > 6 (see _verify_algorithm).
+        min_num_of_probes = 3
+        if (
+            max(new_x_probe_count, new_y_probe_count) > 6
+            and min(new_x_probe_count, new_y_probe_count) < 4
+        ):
+            min_num_of_probes = 4
+
+        new_x_probe_count = max(min_num_of_probes, new_x_probe_count)
+        new_y_probe_count = max(min_num_of_probes, new_y_probe_count)
+
+        gcmd.respond_info(
+            "Adapted probe count: (%s,%s)"
+            % (new_x_probe_count, new_y_probe_count)
+        )
+
+        # If the adapted mesh size is too small, adjust it to something
+        # useful.
+        adjusted_mesh_size = (
+            max(adjusted_mesh_size[0], new_x_probe_count),
+            max(adjusted_mesh_size[1], new_y_probe_count),
+        )
+
+        if self.radius is not None:
+            adapted_radius = (
+                math.sqrt(
+                    (adjusted_mesh_size[0] ** 2) + (adjusted_mesh_size[1] ** 2)
+                )
+                / 2
+            )
+            adapted_origin = (
+                adjusted_mesh_min[0] + (adjusted_mesh_size[0] / 2),
+                adjusted_mesh_min[1] + (adjusted_mesh_size[1] / 2),
+            )
+            to_adapted_origin = math.sqrt(
+                adapted_origin[0] ** 2 + adapted_origin[1] ** 2
+            )
+            # If the adapted mesh size is smaller than the default/full
+            # mesh, adjust the parameters. Otherwise, just do the full mesh.
+            if adapted_radius + to_adapted_origin < self.radius:
+                self.radius = adapted_radius
+                self.origin = adapted_origin
+                self.mesh_min = (-self.radius, -self.radius)
+                self.mesh_max = (self.radius, self.radius)
+                self.mesh_config["x_count"] = self.mesh_config["y_count"] = max(
+                    new_x_probe_count, new_y_probe_count
+                )
+        else:
+            self.mesh_min = adjusted_mesh_min
+            self.mesh_max = adjusted_mesh_max
+            self.mesh_config["x_count"] = new_x_probe_count
+            self.mesh_config["y_count"] = new_y_probe_count
+        self._profile_name = None
+        return True
+
     def update_config(self, gcmd):
         # reset default configuration
         self.radius = self.orig_config["radius"]
         self.origin = self.orig_config["origin"]
-        self.relative_reference_index = self.orig_config["rri"]
         self.mesh_min = self.orig_config["mesh_min"]
         self.mesh_max = self.orig_config["mesh_max"]
         for key in list(self.mesh_config.keys()):
@@ -625,13 +812,6 @@ class BedMeshCalibrate:
 
         params = gcmd.get_command_parameters()
         need_cfg_update = False
-        if "RELATIVE_REFERENCE_INDEX" in params:
-            self.relative_reference_index = gcmd.get_int(
-                "RELATIVE_REFERENCE_INDEX"
-            )
-            if self.relative_reference_index < 0:
-                self.relative_reference_index = None
-            need_cfg_update = True
         if self.radius is not None:
             if "MESH_RADIUS" in params:
                 self.radius = gcmd.get_float("MESH_RADIUS")
@@ -664,43 +844,48 @@ class BedMeshCalibrate:
             self.mesh_config["algo"] = gcmd.get("ALGORITHM").strip().lower()
             need_cfg_update = True
 
+        need_cfg_update |= self.set_adaptive_mesh(gcmd)
+        probe_method = gcmd.get("METHOD", "automatic")
+
         if need_cfg_update:
             self._verify_algorithm(gcmd.error)
-            self._generate_points(gcmd.error)
+            self._generate_points(gcmd.error, probe_method)
             gcmd.respond_info("Generating new points...")
             self.print_generated_points(gcmd.respond_info)
             pts = self._get_adjusted_points()
             self.probe_helper.update_probe_points(pts, 3)
-            msg = "relative_reference_index: %s\n" % (
-                self.relative_reference_index
-            )
-            msg += "\n".join(
+            msg = "\n".join(
                 ["%s: %s" % (k, v) for k, v in self.mesh_config.items()]
             )
             logging.info("Updated Mesh Configuration:\n" + msg)
         else:
-            self.points = self.orig_points
+            self._generate_points(gcmd.error, probe_method)
             pts = self._get_adjusted_points()
             self.probe_helper.update_probe_points(pts, 3)
 
     def _get_adjusted_points(self):
-        if not self.substituted_indices:
-            return self.points
         adj_pts = []
-        last_index = 0
-        for i, pts in self.substituted_indices.items():
-            adj_pts.extend(self.points[last_index:i])
-            adj_pts.extend(pts)
-            # Add one to the last index to skip the point
-            # we are replacing
-            last_index = i + 1
-        adj_pts.extend(self.points[last_index:])
+        if self.substituted_indices:
+            last_index = 0
+            for i, pts in self.substituted_indices.items():
+                adj_pts.extend(self.points[last_index:i])
+                adj_pts.extend(pts)
+                # Add one to the last index to skip the point
+                # we are replacing
+                last_index = i + 1
+            adj_pts.extend(self.points[last_index:])
+        else:
+            adj_pts = list(self.points)
+        if self.zero_reference_mode == ZrefMode.PROBE:
+            adj_pts.append(self.zero_ref_pos)
         return adj_pts
 
     cmd_BED_MESH_CALIBRATE_help = "Perform Mesh Bed Leveling"
 
     def cmd_BED_MESH_CALIBRATE(self, gcmd):
         self._profile_name = gcmd.get("PROFILE", "default")
+        if not self._profile_name.strip():
+            raise gcmd.error("Value for parameter 'PROFILE' must be specified")
         self.bedmesh.set_mesh(None)
         self.update_config(gcmd)
         self.probe_helper.start_probe(gcmd)
@@ -708,6 +893,14 @@ class BedMeshCalibrate:
     def probe_finalize(self, offsets, positions):
         x_offset, y_offset, z_offset = offsets
         positions = [[round(p[0], 2), round(p[1], 2), p[2]] for p in positions]
+        if self.zero_reference_mode == ZrefMode.PROBE:
+            ref_pos = positions.pop()
+            logging.info(
+                "bed_mesh: z-offset replaced with probed z value at "
+                "position (%.2f, %.2f, %.6f)"
+                % (ref_pos[0], ref_pos[1], ref_pos[2])
+            )
+            z_offset = ref_pos[2]
         params = dict(self.mesh_config)
         params["min_x"] = min(positions, key=lambda p: p[0])[0] + x_offset
         params["max_x"] = max(positions, key=lambda p: p[0])[0] + x_offset
@@ -762,11 +955,6 @@ class BedMeshCalibrate:
                         % (off_pt[0], off_pt[1], probed[0], probed[1])
                     )
             positions = corrected_pts
-
-        if self.relative_reference_index is not None:
-            # zero out probe z offset and
-            # set offset relative to reference index
-            z_offset = positions[self.relative_reference_index][2]
 
         probed_matrix = []
         row = []
@@ -825,14 +1013,20 @@ class BedMeshCalibrate:
                     % (len(probed_matrix), str(probed_matrix))
                 )
 
-        z_mesh = ZMesh(params)
+        z_mesh = ZMesh(params, self._profile_name)
         try:
             z_mesh.build_mesh(probed_matrix)
         except BedMeshError as e:
             raise self.gcode.error(str(e))
+        if self.zero_reference_mode == ZrefMode.IN_MESH:
+            # The reference can be anywhere in the mesh, therefore
+            # it is necessary to set the reference after the initial mesh
+            # is generated to lookup the correct z value.
+            z_mesh.set_zero_reference(*self.zero_ref_pos)
         self.bedmesh.set_mesh(z_mesh)
         self.gcode.respond_info("Mesh Bed Leveling Complete")
-        self.bedmesh.save_profile(self._profile_name)
+        if self._profile_name is not None:
+            self.bedmesh.save_profile(self._profile_name)
 
     def _dump_points(self, probed_pts, corrected_pts, offsets):
         # logs generated points with offset applied, points received
@@ -935,10 +1129,10 @@ class MoveSplitter:
 
 
 class ZMesh:
-    def __init__(self, params):
+    def __init__(self, params, name):
+        self.profile_name = name or "adaptive-%X" % (id(self),)
         self.probed_matrix = self.mesh_matrix = None
         self.mesh_params = params
-        self.avg_z = 0.0
         self.mesh_offsets = [0.0, 0.0]
         logging.debug("bed_mesh: probe/mesh parameters:")
         for key, value in self.mesh_params.items():
@@ -996,6 +1190,9 @@ class ZMesh:
     def get_mesh_params(self):
         return self.mesh_params
 
+    def get_profile_name(self):
+        return self.profile_name
+
     def print_probed_matrix(self, print_func):
         if self.probed_matrix is not None:
             msg = "Mesh Leveling Probed Z positions:\n"
@@ -1017,7 +1214,7 @@ class ZMesh:
                 self.mesh_offsets[0],
                 self.mesh_offsets[1],
             )
-            msg += "Mesh Average: %.2f\n" % (self.avg_z)
+            msg += "Mesh Average: %.2f\n" % (self.get_z_average())
             rng = self.get_z_range()
             msg += "Mesh Range: min=%.4f max=%.4f\n" % (rng[0], rng[1])
             msg += "Interpolation Algorithm: %s\n" % (self.mesh_params["algo"])
@@ -1033,14 +1230,18 @@ class ZMesh:
     def build_mesh(self, z_matrix):
         self.probed_matrix = z_matrix
         self._sample(z_matrix)
-        self.avg_z = sum([sum(x) for x in self.mesh_matrix]) / sum(
-            [len(x) for x in self.mesh_matrix]
-        )
-        # Round average to the nearest 100th.  This
-        # should produce an offset that is divisible by common
-        # z step distances
-        self.avg_z = round(self.avg_z, 2)
         self.print_mesh(logging.debug)
+
+    def set_zero_reference(self, xpos, ypos):
+        offset = self.calc_z(xpos, ypos)
+        logging.info(
+            "bed_mesh: setting zero reference at (%.2f, %.2f, %.6f)"
+            % (xpos, ypos, offset)
+        )
+        for matrix in [self.probed_matrix, self.mesh_matrix]:
+            for yidx in range(len(matrix)):
+                for xidx in range(len(matrix[yidx])):
+                    matrix[yidx][xidx] -= offset
 
     def set_mesh_offsets(self, offsets):
         for i, o in enumerate(offsets):
@@ -1073,6 +1274,18 @@ class ZMesh:
         else:
             return 0.0, 0.0
 
+    def get_z_average(self):
+        if self.mesh_matrix is not None:
+            avg_z = sum([sum(x) for x in self.mesh_matrix]) / sum(
+                [len(x) for x in self.mesh_matrix]
+            )
+            # Round average to the nearest 100th.  This
+            # should produce an offset that is divisible by common
+            # z step distances
+            return round(avg_z, 2)
+        else:
+            return 0.0
+
     def _get_linear_index(self, coord, axis):
         if axis == 0:
             # X-axis
@@ -1100,9 +1313,11 @@ class ZMesh:
         y_mult = self.y_mult
         self.mesh_matrix = [
             [
-                0.0
-                if ((i % x_mult) or (j % y_mult))
-                else z_matrix[j // y_mult][i // x_mult]
+                (
+                    0.0
+                    if ((i % x_mult) or (j % y_mult))
+                    else z_matrix[j // y_mult][i // x_mult]
+                )
                 for i in range(self.mesh_x_count)
             ]
             for j in range(self.mesh_y_count)
@@ -1162,9 +1377,11 @@ class ZMesh:
         c = self.mesh_params["tension"]
         self.mesh_matrix = [
             [
-                0.0
-                if ((i % x_mult) or (j % y_mult))
-                else z_matrix[j // y_mult][i // x_mult]
+                (
+                    0.0
+                    if ((i % x_mult) or (j % y_mult))
+                    else z_matrix[j // y_mult][i // x_mult]
+                )
                 for i in range(self.mesh_x_count)
             ]
             for j in range(self.mesh_y_count)
@@ -1266,7 +1483,6 @@ class ProfileManager:
         self.gcode = self.printer.lookup_object("gcode")
         self.bedmesh = bedmesh
         self.profiles = {}
-        self.current_profile = ""
         self.incompatible_profiles = []
         # Fetch stored profiles from Config
         stored_profs = config.get_prefix_sections(self.name)
@@ -1302,16 +1518,8 @@ class ProfileManager:
             desc=self.cmd_BED_MESH_PROFILE_help,
         )
 
-    def initialize(self):
-        self._check_incompatible_profiles()
-        if "default" in self.profiles:
-            self.load_profile("default")
-
     def get_profiles(self):
         return self.profiles
-
-    def get_current_profile(self):
-        return self.current_profile
 
     def _check_incompatible_profiles(self):
         if self.incompatible_profiles:
@@ -1356,7 +1564,6 @@ class ProfileManager:
         profile["points"] = probed_matrix
         profile["mesh_params"] = collections.OrderedDict(mesh_params)
         self.profiles = profiles
-        self.current_profile = prof_name
         self.bedmesh.update_status()
         self.gcode.respond_info(
             "Bed Mesh state has been saved to profile [%s]\n"
@@ -1371,12 +1578,11 @@ class ProfileManager:
             raise self.gcode.error("bed_mesh: Unknown profile [%s]" % prof_name)
         probed_matrix = profile["points"]
         mesh_params = profile["mesh_params"]
-        z_mesh = ZMesh(mesh_params)
+        z_mesh = ZMesh(mesh_params, prof_name)
         try:
             z_mesh.build_mesh(probed_matrix)
         except BedMeshError as e:
             raise self.gcode.error(str(e))
-        self.current_profile = prof_name
         self.bedmesh.set_mesh(z_mesh)
 
     def remove_profile(self, prof_name):
@@ -1410,6 +1616,10 @@ class ProfileManager:
         for key in options:
             name = gcmd.get(key, None)
             if name is not None:
+                if not name.strip():
+                    raise gcmd.error(
+                        "Value for parameter '%s' must be specified" % (key)
+                    )
                 if name == "default" and key == "SAVE":
                     gcmd.respond_info(
                         "Profile 'default' is reserved, please choose"

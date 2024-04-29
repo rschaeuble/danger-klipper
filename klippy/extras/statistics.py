@@ -4,6 +4,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import os, time, logging
+from extras.danger_options import get_danger_options
 
 
 class PrinterSysStats:
@@ -78,7 +79,7 @@ class PrinterStats:
 
     def generate_stats(self, eventtime):
         stats = [cb(eventtime) for cb in self.stats_cb]
-        if max([s[0] for s in stats]):
+        if max([s[0] for s in stats]) and get_danger_options().log_statistics:
             logging.info(
                 "Stats %.1f: %s", eventtime, " ".join([s[1] for s in stats])
             )

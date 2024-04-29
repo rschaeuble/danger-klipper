@@ -5,6 +5,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging, bisect
 
+from extras.danger_options import get_danger_options
 
 ######################################################################
 # Interface between MCU adc and heater temperature callbacks
@@ -14,6 +15,7 @@ SAMPLE_TIME = 0.001
 SAMPLE_COUNT = 8
 REPORT_TIME = 0.300
 RANGE_CHECK_COUNT = 4
+
 
 # Interface between ADC and heater temperature callbacks
 class PrinterADCtoTemperature:
@@ -36,19 +38,26 @@ class PrinterADCtoTemperature:
         self.temperature_callback(read_time + SAMPLE_COUNT * SAMPLE_TIME, temp)
 
     def setup_minmax(self, min_temp, max_temp):
+        if get_danger_options().adc_ignore_limits:
+            danger_check_count = 0
+        else:
+            danger_check_count = RANGE_CHECK_COUNT
+
         adc_range = [self.adc_convert.calc_adc(t) for t in [min_temp, max_temp]]
+
         self.mcu_adc.setup_minmax(
             SAMPLE_TIME,
             SAMPLE_COUNT,
             minval=min(adc_range),
             maxval=max(adc_range),
-            range_check_count=RANGE_CHECK_COUNT,
+            range_check_count=danger_check_count,
         )
 
 
 ######################################################################
 # Linear interpolation
 ######################################################################
+
 
 # Helper code to perform linear interpolation
 class LinearInterpolate:
@@ -98,6 +107,7 @@ class LinearInterpolate:
 # Linear voltage to temperature converter
 ######################################################################
 
+
 # Linear style conversion chips calibrated from temperature measurements
 class LinearVoltage:
     def __init__(self, config, params):
@@ -107,7 +117,7 @@ class LinearVoltage:
         for temp, volt in params:
             adc = (volt - voltage_offset) / adc_voltage
             if adc < 0.0 or adc > 1.0:
-                logging.warn(
+                logging.warning(
                     "Ignoring adc sample %.3f/%.3f in heater %s",
                     temp,
                     volt,
@@ -145,6 +155,7 @@ class CustomLinearVoltage:
 ######################################################################
 # Linear resistance to temperature converter
 ######################################################################
+
 
 # Linear resistance calibrated from temperature measurements
 class LinearResistance:

@@ -1,0 +1,15 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+RUN apt update && apt install -y sudo git curl
+
+COPY . /klipper
+WORKDIR /klipper
+
+RUN ./scripts/ci-install.sh
+RUN ./scripts/ci-build.sh
+ENV PATH="/ci_build/python-env/bin:$PATH"
+RUN pip install -r ./scripts/requirements_dev.txt

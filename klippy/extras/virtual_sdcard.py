@@ -1,11 +1,18 @@
 # Virtual sdcard support (print files directly from a host g-code file)
 #
-# Copyright (C) 2018  Kevin O'Connor <kevin@koconnor.net>
+# Copyright (C) 2018-2024  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import os, logging
+import os, sys, logging, io
 
 VALID_GCODE_EXTS = ["gcode", "g", "gco"]
+
+
+DEFAULT_ERROR_GCODE = """
+{% if 'heaters' in printer %}
+   TURN_OFF_HEATERS
+{% endif %}
+"""
 
 
 class VirtualSD:
@@ -16,6 +23,7 @@ class VirtualSD:
         )
         # sdcard state
         sd = config.get("path")
+        self.with_subdirs = config.getboolean("with_subdirs", False)
         self.sdcard_dirname = os.path.normpath(os.path.expanduser(sd))
         self.current_file = None
         self.file_position = self.file_size = 0
@@ -29,7 +37,7 @@ class VirtualSD:
         # Error handling
         gcode_macro = self.printer.load_object(config, "gcode_macro")
         self.on_error_gcode = gcode_macro.load_template(
-            config, "on_error_gcode", ""
+            config, "on_error_gcode", DEFAULT_ERROR_GCODE
         )
         # Register commands
         self.gcode = self.printer.lookup_object("gcode")
@@ -144,7 +152,7 @@ class VirtualSD:
             self.current_file.close()
             self.current_file = None
             self.print_stats.note_cancel()
-        self.file_position = self.file_size = 0.0
+        self.file_position = self.file_size = 0
 
     # G-Code commands
     def cmd_error(self, gcmd):
@@ -155,7 +163,7 @@ class VirtualSD:
             self.do_pause()
             self.current_file.close()
             self.current_file = None
-        self.file_position = self.file_size = 0.0
+        self.file_position = self.file_size = 0
         self.print_stats.reset()
         self.printer.send_event("virtual_sdcard:reset_file")
 
@@ -185,7 +193,7 @@ class VirtualSD:
 
     def cmd_M20(self, gcmd):
         # List SD card
-        files = self.get_file_list()
+        files = self.get_file_list(self.with_subdirs)
         gcmd.respond_raw("Begin file list")
         for fname, fsize in files:
             gcmd.respond_raw("%s %d" % (fname, fsize))
@@ -203,7 +211,7 @@ class VirtualSD:
         filename = gcmd.get_raw_command_parameters().strip()
         if filename.startswith("/"):
             filename = filename[1:]
-        self._load_file(gcmd, filename)
+        self._load_file(gcmd, filename, self.with_subdirs)
 
     def _load_file(self, gcmd, filename, check_subdirs=False):
         files = self.get_file_list(check_subdirs)
@@ -214,14 +222,14 @@ class VirtualSD:
             if fname not in flist:
                 fname = files_by_lower[fname.lower()]
             fname = os.path.join(self.sdcard_dirname, fname)
-            f = open(fname, "r")
+            f = io.open(fname, "r", newline="")
             f.seek(0, os.SEEK_END)
             fsize = f.tell()
             f.seek(0)
         except:
             logging.exception("virtual_sdcard file open")
             raise gcmd.error("Unable to open file")
-        gcmd.respond_raw("File opened:%s Size:%d" % (filename, fsize))
+        gcmd.respond_raw("File opened: %s Size: %d" % (filename, fsize))
         gcmd.respond_raw("File selected")
         self.current_file = f
         self.file_position = 0
@@ -304,7 +312,10 @@ class VirtualSD:
             # Dispatch command
             self.cmd_from_sd = True
             line = lines.pop()
-            next_file_position = self.file_position + len(line) + 1
+            if sys.version_info.major >= 3:
+                next_file_position = self.file_position + len(line.encode()) + 1
+            else:
+                next_file_position = self.file_position + len(line) + 1
             self.next_file_position = next_file_position
             try:
                 self.gcode.run_script(line)

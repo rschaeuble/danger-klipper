@@ -116,6 +116,13 @@ Fields["CHOPCONF"] = {
     "diss2g": 0x01 << 30,
     "diss2vs": 0x01 << 31,
 }
+Fields["DRV_CONF"] = {
+    "bbmtime": 0x1F << 0,
+    "bbmclks": 0x0F << 8,
+    "otselect": 0x03 << 16,
+    "drvstrength": 0x03 << 18,
+    "filt_isense": 0x03 << 20,
+}
 Fields["DRV_STATUS"] = {
     "sg_result": 0x3FF << 0,
     "s2vsa": 0x01 << 12,
@@ -172,6 +179,30 @@ Fields["IOIN"] = {
     "version": 0xFF << 24,
 }
 Fields["LOST_STEPS"] = {"lost_steps": 0xFFFFF << 0}
+Fields["MSLUT0"] = {"mslut0": 0xFFFFFFFF}
+Fields["MSLUT1"] = {"mslut1": 0xFFFFFFFF}
+Fields["MSLUT2"] = {"mslut2": 0xFFFFFFFF}
+Fields["MSLUT3"] = {"mslut3": 0xFFFFFFFF}
+Fields["MSLUT4"] = {"mslut4": 0xFFFFFFFF}
+Fields["MSLUT5"] = {"mslut5": 0xFFFFFFFF}
+Fields["MSLUT6"] = {"mslut6": 0xFFFFFFFF}
+Fields["MSLUT7"] = {"mslut7": 0xFFFFFFFF}
+Fields["MSLUTSEL"] = {
+    "x3": 0xFF << 24,
+    "x2": 0xFF << 16,
+    "x1": 0xFF << 8,
+    "w3": 0x03 << 6,
+    "w2": 0x03 << 4,
+    "w1": 0x03 << 2,
+    "w0": 0x03 << 0,
+}
+Fields["MSLUTSTART"] = {
+    "start_sin": 0xFF << 0,
+    "start_sin90": 0xFF << 16,
+}
+Fields["MSCNT"] = {"mscnt": 0x3FF << 0}
+Fields["MSCURACT"] = {"cur_a": 0x1FF << 0, "cur_b": 0x1FF << 16}
+Fields["LOST_STEPS"] = {"lost_steps": 0xFFFFF << 0}
 Fields["MSCNT"] = {"mscnt": 0x3FF << 0}
 Fields["MSCURACT"] = {"cur_a": 0x1FF << 0, "cur_b": 0x1FF << 16}
 Fields["OTP_READ"] = {
@@ -203,6 +234,12 @@ Fields["TSTEP"] = {"tstep": 0xFFFFF << 0}
 SignedFields = ["cur_a", "cur_b", "sgt", "xactual", "vactual", "pwm_scale_auto"]
 
 FieldFormatters = dict(tmc2130.FieldFormatters)
+FieldFormatters.update(
+    {
+        "s2vsa": (lambda v: "1(ShortToSupply_A!)" if v else ""),
+        "s2vsb": (lambda v: "1(ShortToSupply_B!)" if v else ""),
+    }
+)
 
 
 ######################################################################
@@ -210,7 +247,7 @@ FieldFormatters = dict(tmc2130.FieldFormatters)
 ######################################################################
 
 VREF = 0.325
-MAX_CURRENT = 3.000
+MAX_CURRENT = 10.000  # Maximum dependent on board, but 10 is safe sanity check
 
 
 class TMC5160CurrentHelper:
@@ -219,22 +256,37 @@ class TMC5160CurrentHelper:
         self.name = config.get_name().split()[-1]
         self.mcu_tmc = mcu_tmc
         self.fields = mcu_tmc.get_fields()
-        run_current = config.getfloat(
+        self.run_current = config.getfloat(
             "run_current", above=0.0, maxval=MAX_CURRENT
         )
-        hold_current = config.getfloat(
+        self.hold_current = config.getfloat(
             "hold_current", MAX_CURRENT, above=0.0, maxval=MAX_CURRENT
         )
-        self.req_hold_current = hold_current
+        self._home_current = config.getfloat(
+            "home_current", self.run_current, above=0.0, maxval=MAX_CURRENT
+        )
+        self.current_change_dwell_time = config.getfloat(
+            "current_change_dwell_time", 0.5, above=0.0
+        )
+        self._prev_current = self.run_current
+        self.req_hold_current = self.hold_current
         self.sense_resistor = config.getfloat(
             "sense_resistor", 0.075, above=0.0
         )
-        self._set_globalscaler(run_current)
-        irun, ihold = self._calc_current(run_current, hold_current)
+        gscaler, irun, ihold = self._calc_current(
+            self.run_current, self.hold_current
+        )
+        self.fields.set_field("globalscaler", gscaler)
         self.fields.set_field("ihold", ihold)
         self.fields.set_field("irun", irun)
 
-    def _set_globalscaler(self, current):
+    def needs_home_current_change(self):
+        return self._home_current != self.run_current
+
+    def set_home_current(self, new_home_current):
+        self._home_current = min(MAX_CURRENT, new_home_current)
+
+    def _calc_globalscaler(self, current):
         globalscaler = int(
             (current * 256.0 * math.sqrt(2.0) * self.sense_resistor / VREF)
             + 0.5
@@ -242,10 +294,9 @@ class TMC5160CurrentHelper:
         globalscaler = max(32, globalscaler)
         if globalscaler >= 256:
             globalscaler = 0
-        self.fields.set_field("globalscaler", globalscaler)
+        return globalscaler
 
-    def _calc_current_bits(self, current):
-        globalscaler = self.fields.get_field("globalscaler")
+    def _calc_current_bits(self, current, globalscaler):
         if not globalscaler:
             globalscaler = 256
         cs = int(
@@ -257,9 +308,10 @@ class TMC5160CurrentHelper:
         return max(0, min(31, cs))
 
     def _calc_current(self, run_current, hold_current):
-        irun = self._calc_current_bits(run_current)
-        ihold = self._calc_current_bits(min(hold_current, run_current))
-        return irun, ihold
+        gscaler = self._calc_globalscaler(run_current)
+        irun = self._calc_current_bits(run_current, gscaler)
+        ihold = self._calc_current_bits(min(hold_current, run_current), gscaler)
+        return gscaler, irun, ihold
 
     def _calc_current_from_field(self, field_name):
         globalscaler = self.fields.get_field("globalscaler")
@@ -276,14 +328,36 @@ class TMC5160CurrentHelper:
     def get_current(self):
         run_current = self._calc_current_from_field("irun")
         hold_current = self._calc_current_from_field("ihold")
-        return run_current, hold_current, self.req_hold_current, MAX_CURRENT
+        return (
+            run_current,
+            hold_current,
+            self.req_hold_current,
+            MAX_CURRENT,
+            self._home_current,
+        )
 
-    def set_current(self, run_current, hold_current, print_time):
+    def set_current(self, run_current, hold_current, print_time, force=False):
+        if (
+            run_current == self._prev_current
+            and hold_current == self.req_hold_current
+            and not force
+        ):
+            return
         self.req_hold_current = hold_current
-        irun, ihold = self._calc_current(run_current, hold_current)
+        gscaler, irun, ihold = self._calc_current(run_current, hold_current)
+        val = self.fields.set_field("globalscaler", gscaler)
+        self.mcu_tmc.set_register("GLOBALSCALER", val, print_time)
         self.fields.set_field("ihold", ihold)
         val = self.fields.set_field("irun", irun)
         self.mcu_tmc.set_register("IHOLD_IRUN", val, print_time)
+
+    def set_current_for_homing(self, print_time):
+        prev_run_cur, _, _, _, _ = self.get_current()
+        self._prev_current = prev_run_cur
+        self.set_current(self._home_current, self.hold_current, print_time)
+
+    def set_current_for_normal(self, print_time):
+        self.set_current(self._prev_current, self.hold_current, print_time)
 
 
 ######################################################################
@@ -295,7 +369,9 @@ class TMC5160:
     def __init__(self, config):
         # Setup mcu communication
         self.fields = tmc.FieldHelper(Fields, SignedFields, FieldFormatters)
-        self.mcu_tmc = tmc2130.MCU_TMC_SPI(config, Registers, self.fields)
+        self.mcu_tmc = tmc2130.MCU_TMC_SPI(
+            config, Registers, self.fields, TMC_FREQUENCY
+        )
         # Allow virtual pins to be created
         tmc.TMCVirtualPinHelper(config, self.mcu_tmc)
         # Register commands
@@ -305,9 +381,12 @@ class TMC5160:
         self.get_phase_offset = cmdhelper.get_phase_offset
         self.get_status = cmdhelper.get_status
         # Setup basic register values
+        tmc.TMCWaveTableHelper(config, self.mcu_tmc)
         tmc.TMCStealthchopHelper(config, self.mcu_tmc, TMC_FREQUENCY)
-        #   CHOPCONF
         set_config_field = self.fields.set_config_field
+        #   GCONF
+        set_config_field(config, "multistep_filt", True)
+        #   CHOPCONF
         set_config_field(config, "toff", 3)
         set_config_field(config, "hstrt", 5)
         set_config_field(config, "hend", 2)
@@ -328,6 +407,11 @@ class TMC5160:
         set_config_field(config, "seimin", 0)
         set_config_field(config, "sgt", 0)
         set_config_field(config, "sfilt", 0)
+        #   DRV_CONF
+        set_config_field(config, "drvstrength", 0)
+        set_config_field(config, "bbmclks", 4)
+        set_config_field(config, "bbmtime", 0)
+        set_config_field(config, "filt_isense", 0)
         #   IHOLDIRUN
         set_config_field(config, "iholddelay", 6)
         #   PWMCONF

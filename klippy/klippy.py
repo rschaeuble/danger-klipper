@@ -4,9 +4,10 @@
 # Copyright (C) 2016-2020  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import sys, os, gc, optparse, logging, time, collections, importlib
+import sys, os, gc, optparse, logging, time, collections, importlib, importlib.util
 import util, reactor, queuelogger, msgproto
 import gcode, configfile, pins, mcu, toolhead, webhooks
+from extras.danger_options import get_danger_options
 
 message_ready = "Printer is ready"
 
@@ -21,6 +22,8 @@ Once the underlying issue is corrected, use the "RESTART"
 command to reload the config and restart the host software.
 Printer is halted
 """
+
+message_protocol_error = """MCU Protocol error"""
 
 message_protocol_error1 = """
 This is frequently caused by running an older version of the
@@ -53,6 +56,10 @@ class Printer:
     command_error = gcode.CommandError
 
     def __init__(self, main_reactor, bglogger, start_args):
+        if sys.version_info[0] < 3:
+            logging.error("DangerKlipper requires Python 3")
+            sys.exit(1)
+
         self.bglogger = bglogger
         self.start_args = start_args
         self.reactor = main_reactor
@@ -125,17 +132,47 @@ class Printer:
             return self.objects[section]
         module_parts = section.split()
         module_name = module_parts[0]
-        py_name = os.path.join(
+        extras_py_name = os.path.join(
             os.path.dirname(__file__), "extras", module_name + ".py"
         )
-        py_dirname = os.path.join(
+        extras_py_dirname = os.path.join(
             os.path.dirname(__file__), "extras", module_name, "__init__.py"
         )
-        if not os.path.exists(py_name) and not os.path.exists(py_dirname):
+
+        plugins_py_dirname = os.path.join(
+            os.path.dirname(__file__), "plugins", module_name, "__init__.py"
+        )
+        plugins_py_name = os.path.join(
+            os.path.dirname(__file__), "plugins", module_name + ".py"
+        )
+
+        found_in_extras = os.path.exists(extras_py_name) or os.path.exists(
+            extras_py_dirname
+        )
+        found_in_plugins = os.path.exists(plugins_py_name)
+        if not found_in_extras and not found_in_plugins:
             if default is not configfile.sentinel:
                 return default
             raise self.config_error("Unable to load module '%s'" % (section,))
-        mod = importlib.import_module("extras." + module_name)
+
+        if (
+            found_in_extras
+            and found_in_plugins
+            and not get_danger_options().allow_plugin_override
+        ):
+            raise self.config_error(
+                "Module '%s' found in both extras and plugins!" % (section,)
+            )
+
+        if found_in_plugins:
+            mod_spec = importlib.util.spec_from_file_location(
+                "extras." + module_name, plugins_py_name
+            )
+            mod = importlib.util.module_from_spec(mod_spec)
+            mod_spec.loader.exec_module(mod)
+        else:
+            mod = importlib.import_module("extras." + module_name)
+
         init_func = "load_config"
         if len(module_parts) > 1:
             init_func = "load_config_prefix"
@@ -150,50 +187,77 @@ class Printer:
     def _read_config(self):
         self.objects["configfile"] = pconfig = configfile.PrinterConfig(self)
         config = pconfig.read_main_config()
-        if self.bglogger is not None:
+        self.load_object(config, "danger_options", None)
+        if (
+            self.bglogger is not None
+            and get_danger_options().log_config_file_at_startup
+        ):
             pconfig.log_config(config)
         # Create printer components
         for m in [pins, mcu]:
             m.add_printer_objects(config)
         for section_config in config.get_prefix_sections(""):
             self.load_object(config, section_config.get_name(), None)
+        # dangerklipper on-by-default extras
+        for section_config in ["force_move"]:
+            self.load_object(config, section_config, None)
         for m in [toolhead]:
             m.add_printer_objects(config)
         # Validate that there are no undefined parameters in the config file
-        pconfig.check_unused_options(config)
+        error_on_unused = get_danger_options().error_on_unused_config_options
+        pconfig.check_unused_options(config, error_on_unused)
 
     def _build_protocol_error_message(self, e):
         host_version = self.start_args["software_version"]
+
         msg_update = []
         msg_updated = []
-        for mcu_name, _mcu in self.lookup_objects("mcu"):
+
+        for mcu_name, mcu_obj in self.lookup_objects("mcu"):
             try:
-                mcu_version = _mcu.get_status()["mcu_version"]
+                mcu_version = mcu_obj.get_status()["mcu_version"]
             except:
-                logging.exception("Unable to retrieve mcu_version from mcu")
+                logging.exception("Unable to retrieve mcu_version from mcu_obj")
                 continue
+
             if mcu_version != host_version:
                 msg_update.append(
                     "%s: Current version %s"
-                    % (mcu_name.split()[-1], mcu_version)
+                    % (
+                        mcu_name.split()[-1],
+                        mcu_obj.get_status()["mcu_version"],
+                    )
                 )
             else:
                 msg_updated.append(
                     "%s: Current version %s"
-                    % (mcu_name.split()[-1], mcu_version)
+                    % (
+                        mcu_name.split()[-1],
+                        mcu_obj.get_status()["mcu_version"],
+                    )
                 )
-        if not msg_update:
-            msg_update.append("<none>")
-        if not msg_updated:
+
+        if not len(msg_updated):
             msg_updated.append("<none>")
-        msg = [
-            "MCU Protocol error",
-            message_protocol_error1,
-            "Your Klipper version is: %s" % (host_version,),
+
+        version_msg = [
+            "\nYour Klipper version is: %s\n" % host_version,
             "MCU(s) which should be updated:",
+            "\n%s\n" % "\n".join(msg_update),
+            "Up-to-date MCU(s):",
+            "\n%s\n" % "\n".join(msg_updated),
         ]
-        msg += msg_update + ["Up-to-date MCU(s):"] + msg_updated
-        msg += [message_protocol_error2, str(e)]
+
+        msg = [
+            message_protocol_error,
+            "",
+            " ".join(message_protocol_error1.splitlines())[1:],
+            "\n".join(version_msg),
+            " ".join(message_protocol_error2.splitlines())[1:],
+            "",
+            str(e),
+        ]
+
         return "\n".join(msg)
 
     def _connect(self, eventtime):
@@ -312,6 +376,20 @@ class Printer:
             self.run_result = result
         self.reactor.end()
 
+    def wait_while(self, condition_cb):
+        """
+        receives a callback
+        waits until callback returns False
+            (or is interrupted, or printer shuts down)
+        """
+        gcode = self.lookup_object("gcode")
+        counter = gcode.get_interrupt_counter()
+        eventtime = self.reactor.monotonic()
+        while condition_cb(eventtime):
+            if self.is_shutdown() or counter != gcode.get_interrupt_counter():
+                return
+            eventtime = self.reactor.pause(eventtime + 1.0)
+
 
 ######################################################################
 # Startup
@@ -373,6 +451,11 @@ def main():
         help="write log to file instead of stderr",
     )
     opts.add_option(
+        "--rotate-log-at-restart",
+        action="store_true",
+        help="rotate the log file at every restart",
+    )
+    opts.add_option(
         "-v", action="store_true", dest="verbose", help="enable debug messages"
     )
     opts.add_option(
@@ -421,17 +504,32 @@ def main():
     bglogger = None
     if options.logfile:
         start_args["log_file"] = options.logfile
-        bglogger = queuelogger.setup_bg_logging(options.logfile, debuglevel)
+        bglogger = queuelogger.setup_bg_logging(
+            filename=options.logfile,
+            debuglevel=debuglevel,
+            rotate_log_at_restart=options.rotate_log_at_restart,
+        )
+        if options.rotate_log_at_restart:
+            bglogger.doRollover()
     else:
         logging.getLogger().setLevel(debuglevel)
+    logging.info("=======================")
     logging.info("Starting Klippy...")
-    start_args["software_version"] = util.get_git_version()
+    git_info = util.get_git_version()
+    git_vers = git_info["version"]
+
+    extra_git_desc = ""
+    extra_git_desc += "\nBranch: %s" % (git_info["branch"])
+    extra_git_desc += "\nRemote: %s" % (git_info["remote"])
+    extra_git_desc += "\nTracked URL: %s" % (git_info["url"])
+    start_args["software_version"] = git_vers
     start_args["cpu_info"] = util.get_cpu_info()
     if bglogger is not None:
         versions = "\n".join(
             [
                 "Args: %s" % (sys.argv,),
-                "Git version: %s" % (repr(start_args["software_version"]),),
+                "Git version: %s%s"
+                % (repr(start_args["software_version"]), extra_git_desc),
                 "CPU: %s" % (start_args["cpu_info"],),
                 "Python: %s" % (repr(sys.version),),
             ]
@@ -459,6 +557,8 @@ def main():
         main_reactor = printer = None
         logging.info("Restarting printer")
         start_args["start_reason"] = res
+        if options.rotate_log_at_restart and bglogger is not None:
+            bglogger.doRollover()
 
     if bglogger is not None:
         bglogger.stop()

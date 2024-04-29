@@ -48,9 +48,8 @@ class ZAdjustHelper:
         for s in self.z_steppers:
             s.set_trapq(None)
         # Move each z stepper (sorted from lowest to highest) until they match
-        positions = sorted(
-            [(-a, s) for a, s in zip(adjustments, self.z_steppers)]
-        )
+        positions = [(-a, s) for a, s in zip(adjustments, self.z_steppers)]
+        positions.sort(key=(lambda k: k[0]))
         first_stepper_offset, first_stepper = positions[0]
         z_low = curpos[2] - first_stepper_offset
         for i in range(len(positions) - 1):
@@ -105,6 +104,9 @@ class RetryHelper:
         self.default_retry_tolerance = config.getfloat(
             "retry_tolerance", 0.0, above=0.0
         )
+        self.default_increasing_threshold = config.getfloat(
+            "increasing_threshold", 0.0000001, above=0.0
+        )
         self.value_label = "Probed points range"
         self.error_msg_extra = error_msg_extra
 
@@ -118,12 +120,15 @@ class RetryHelper:
             minval=0.0,
             maxval=1.0,
         )
+        self.increasing_threshold = gcmd.get_float(
+            "INCREASING_THRESHOLD", self.default_increasing_threshold, above=0.0
+        )
         self.current_retry = 0
         self.previous = None
         self.increasing = 0
 
     def check_increase(self, error):
-        if self.previous and error > self.previous + 0.0000001:
+        if self.previous and error > self.previous + self.increasing_threshold:
             self.increasing += 1
         elif self.increasing > 0:
             self.increasing -= 1

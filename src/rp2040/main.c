@@ -6,6 +6,7 @@
 
 #include <stdint.h> // uint32_t
 #include "board/misc.h" // bootloader_request
+#include "generic/armcm_reset.h" // try_request_canboot
 #include "hardware/structs/clocks.h" // clock_hw_t
 #include "hardware/structs/pll.h" // pll_hw_t
 #include "hardware/structs/resets.h" // sio_hw
@@ -16,26 +17,23 @@
 
 
 /****************************************************************
- * watchdog handler
+ * Ram IRQ vector table
  ****************************************************************/
 
-void
-watchdog_reset(void)
+// Copy vector table to ram and activate it
+static void
+enable_ram_vectortable(void)
 {
-    watchdog_hw->load = 0x800000; // ~350ms
-}
-DECL_TASK(watchdog_reset);
+    // Symbols created by rp2040_link.lds.S linker script
+    extern uint32_t _ram_vectortable_start, _ram_vectortable_end;
+    extern uint32_t _text_vectortable_start;
 
-void
-watchdog_init(void)
-{
-    watchdog_reset();
-    watchdog_hw->ctrl = (WATCHDOG_CTRL_PAUSE_DBG0_BITS
-                         | WATCHDOG_CTRL_PAUSE_DBG1_BITS
-                         | WATCHDOG_CTRL_PAUSE_JTAG_BITS
-                         | WATCHDOG_CTRL_ENABLE_BITS);
+    uint32_t count = (&_ram_vectortable_end - &_ram_vectortable_start) * 4;
+    __builtin_memcpy(&_ram_vectortable_start, &_text_vectortable_start, count);
+    barrier();
+
+    SCB->VTOR = (uint32_t)&_ram_vectortable_start;
 }
-DECL_INIT(watchdog_init);
 
 
 /****************************************************************
@@ -45,6 +43,8 @@ DECL_INIT(watchdog_init);
 void
 bootloader_request(void)
 {
+    watchdog_hw->ctrl = 0;
+    try_request_canboot();
     // Use the bootrom-provided code to reset into BOOTSEL mode
     reset_to_usb_boot(0, 0);
 }
@@ -165,6 +165,7 @@ clock_setup(void)
 void
 armcm_main(void)
 {
+    enable_ram_vectortable();
     clock_setup();
     sched_main();
 }

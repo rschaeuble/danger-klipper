@@ -20,6 +20,13 @@ Registers = {
     "THIGH": 0x15,
     "XDIRECT": 0x2D,
     "MSLUT0": 0x60,
+    "MSLUT1": 0x61,
+    "MSLUT2": 0x62,
+    "MSLUT3": 0x63,
+    "MSLUT4": 0x64,
+    "MSLUT5": 0x65,
+    "MSLUT6": 0x66,
+    "MSLUT7": 0x67,
     "MSLUTSEL": 0x68,
     "MSLUTSTART": 0x69,
     "MSCNT": 0x6A,
@@ -89,6 +96,27 @@ Fields["TSTEP"] = {"tstep": 0xFFFFF}
 Fields["TPWMTHRS"] = {"tpwmthrs": 0xFFFFF}
 Fields["TCOOLTHRS"] = {"tcoolthrs": 0xFFFFF}
 Fields["THIGH"] = {"thigh": 0xFFFFF}
+Fields["MSLUT0"] = {"mslut0": 0xFFFFFFFF}
+Fields["MSLUT1"] = {"mslut1": 0xFFFFFFFF}
+Fields["MSLUT2"] = {"mslut2": 0xFFFFFFFF}
+Fields["MSLUT3"] = {"mslut3": 0xFFFFFFFF}
+Fields["MSLUT4"] = {"mslut4": 0xFFFFFFFF}
+Fields["MSLUT5"] = {"mslut5": 0xFFFFFFFF}
+Fields["MSLUT6"] = {"mslut6": 0xFFFFFFFF}
+Fields["MSLUT7"] = {"mslut7": 0xFFFFFFFF}
+Fields["MSLUTSEL"] = {
+    "x3": 0xFF << 24,
+    "x2": 0xFF << 16,
+    "x1": 0xFF << 8,
+    "w3": 0x03 << 6,
+    "w2": 0x03 << 4,
+    "w1": 0x03 << 2,
+    "w0": 0x03 << 0,
+}
+Fields["MSLUTSTART"] = {
+    "start_sin": 0xFF << 0,
+    "start_sin90": 0xFF << 16,
+}
 Fields["MSCNT"] = {"mscnt": 0x3FF}
 Fields["MSCURACT"] = {"cur_a": 0x1FF, "cur_b": 0x1FF << 16}
 Fields["CHOPCONF"] = {
@@ -175,20 +203,35 @@ class TMCCurrentHelper:
         self.name = config.get_name().split()[-1]
         self.mcu_tmc = mcu_tmc
         self.fields = mcu_tmc.get_fields()
-        run_current = config.getfloat(
+        self.run_current = config.getfloat(
             "run_current", above=0.0, maxval=MAX_CURRENT
         )
-        hold_current = config.getfloat(
+        self.hold_current = config.getfloat(
             "hold_current", MAX_CURRENT, above=0.0, maxval=MAX_CURRENT
         )
-        self.req_hold_current = hold_current
+        self._home_current = config.getfloat(
+            "home_current", self.run_current, above=0.0, maxval=MAX_CURRENT
+        )
+        self.current_change_dwell_time = config.getfloat(
+            "current_change_dwell_time", 0.5, above=0.0
+        )
+        self._prev_current = self.run_current
+        self.req_hold_current = self.hold_current
         self.sense_resistor = config.getfloat(
             "sense_resistor", 0.110, above=0.0
         )
-        vsense, irun, ihold = self._calc_current(run_current, hold_current)
+        vsense, irun, ihold = self._calc_current(
+            self.run_current, self.hold_current
+        )
         self.fields.set_field("vsense", vsense)
         self.fields.set_field("ihold", ihold)
         self.fields.set_field("irun", irun)
+
+    def needs_home_current_change(self):
+        return self._home_current != self.run_current
+
+    def set_home_current(self, new_home_current):
+        self._home_current = min(MAX_CURRENT, new_home_current)
 
     def _calc_current_bits(self, current, vsense):
         sense_resistor = self.sense_resistor + 0.020
@@ -228,9 +271,21 @@ class TMCCurrentHelper:
         vsense = self.fields.get_field("vsense")
         run_current = self._calc_current_from_bits(irun, vsense)
         hold_current = self._calc_current_from_bits(ihold, vsense)
-        return run_current, hold_current, self.req_hold_current, MAX_CURRENT
+        return (
+            run_current,
+            hold_current,
+            self.req_hold_current,
+            MAX_CURRENT,
+            self._home_current,
+        )
 
-    def set_current(self, run_current, hold_current, print_time):
+    def set_current(self, run_current, hold_current, print_time, force=False):
+        if (
+            run_current == self._prev_current
+            and hold_current == self.req_hold_current
+            and not force
+        ):
+            return
         self.req_hold_current = hold_current
         vsense, irun, ihold = self._calc_current(run_current, hold_current)
         if vsense != self.fields.get_field("vsense"):
@@ -239,6 +294,14 @@ class TMCCurrentHelper:
         self.fields.set_field("ihold", ihold)
         val = self.fields.set_field("irun", irun)
         self.mcu_tmc.set_register("IHOLD_IRUN", val, print_time)
+
+    def set_current_for_homing(self, print_time):
+        prev_run_cur, _, _, _, _ = self.get_current()
+        self._prev_current = prev_run_cur
+        self.set_current(self._home_current, self.hold_current, print_time)
+
+    def set_current_for_normal(self, print_time):
+        self.set_current(self._prev_current, self.hold_current, print_time)
 
 
 ######################################################################
@@ -334,13 +397,14 @@ def lookup_tmc_spi_chain(config):
 
 # Helper code for working with TMC devices via SPI
 class MCU_TMC_SPI:
-    def __init__(self, config, name_to_reg, fields):
+    def __init__(self, config, name_to_reg, fields, tmc_frequency):
         self.printer = config.get_printer()
         self.name = config.get_name().split()[-1]
         self.tmc_spi, self.chain_pos = lookup_tmc_spi_chain(config)
         self.mutex = self.tmc_spi.mutex
         self.name_to_reg = name_to_reg
         self.fields = fields
+        self.tmc_frequency = tmc_frequency
 
     def get_fields(self):
         return self.fields
@@ -362,6 +426,9 @@ class MCU_TMC_SPI:
             "Unable to write tmc spi '%s' register %s" % (self.name, reg_name)
         )
 
+    def get_tmc_frequency(self):
+        return self.tmc_frequency
+
 
 ######################################################################
 # TMC2130 printer object
@@ -372,7 +439,9 @@ class TMC2130:
     def __init__(self, config):
         # Setup mcu communication
         self.fields = tmc.FieldHelper(Fields, SignedFields, FieldFormatters)
-        self.mcu_tmc = MCU_TMC_SPI(config, Registers, self.fields)
+        self.mcu_tmc = MCU_TMC_SPI(
+            config, Registers, self.fields, TMC_FREQUENCY
+        )
         # Allow virtual pins to be created
         tmc.TMCVirtualPinHelper(config, self.mcu_tmc)
         # Register commands
@@ -382,20 +451,26 @@ class TMC2130:
         self.get_phase_offset = cmdhelper.get_phase_offset
         self.get_status = cmdhelper.get_status
         # Setup basic register values
+        tmc.TMCWaveTableHelper(config, self.mcu_tmc)
         tmc.TMCStealthchopHelper(config, self.mcu_tmc, TMC_FREQUENCY)
         # Allow other registers to be set from the config
         set_config_field = self.fields.set_config_field
+        # CHOPCONF
         set_config_field(config, "toff", 4)
         set_config_field(config, "hstrt", 0)
         set_config_field(config, "hend", 7)
         set_config_field(config, "tbl", 1)
+        # COOLCONF
+        set_config_field(config, "sgt", 0)
+        # IHOLDIRUN
         set_config_field(config, "iholddelay", 8)
-        set_config_field(config, "tpowerdown", 0)
+        # PWMCONF
         set_config_field(config, "pwm_ampl", 128)
         set_config_field(config, "pwm_grad", 4)
         set_config_field(config, "pwm_freq", 1)
         set_config_field(config, "pwm_autoscale", True)
-        set_config_field(config, "sgt", 0)
+        # TPOWERDOWN
+        set_config_field(config, "tpowerdown", 0)
 
 
 def load_config_prefix(config):

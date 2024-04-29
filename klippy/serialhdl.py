@@ -7,6 +7,7 @@ import logging, threading, os
 import serial
 
 import msgproto, chelper, util
+from extras.danger_options import get_danger_options
 
 
 class error(Exception):
@@ -157,8 +158,8 @@ class SerialReader:
                     bustype="socketcan",
                 )
                 bus.send(set_id_msg)
-            except can.CanError as e:
-                logging.warn(
+            except (can.CanError, os.error) as e:
+                logging.warning(
                     "%sUnable to open CAN port: %s", self.warn_prefix, e
                 )
                 self.reactor.pause(self.reactor.monotonic() + 5.0)
@@ -264,6 +265,9 @@ class SerialReader:
     def get_msgparser(self):
         return self.msgparser
 
+    def get_serialqueue(self):
+        return self.serialqueue
+
     def get_default_command_queue(self):
         return self.default_cmd_queue
 
@@ -364,7 +368,8 @@ class SerialReader:
         )
 
     def handle_default(self, params):
-        logging.warn("%sgot %s", self.warn_prefix, params)
+        if get_danger_options().log_serial_reader_warnings:
+            logging.warn("%sgot %s", self.warn_prefix, params)
 
 
 # Class to send a query command and return the received response

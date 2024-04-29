@@ -153,6 +153,8 @@ class GCodeDispatch:
         self.ready_gcode_handlers = {}
         self.mux_commands = {}
         self.gcode_help = {}
+        self.status_commands = {}
+        self._interrupt_counter = 0
         # Register commands needed before config file is loaded
         handlers = [
             "M110",
@@ -163,11 +165,18 @@ class GCodeDispatch:
             "ECHO",
             "STATUS",
             "HELP",
+            "HEATER_INTERRUPT",
         ]
         for cmd in handlers:
             func = getattr(self, "cmd_" + cmd)
             desc = getattr(self, "cmd_" + cmd + "_help", None)
             self.register_command(cmd, func, True, desc)
+
+    def get_interrupt_counter(self):
+        return self._interrupt_counter
+
+    def increment_interrupt_counter(self):
+        self._interrupt_counter += 1
 
     def is_traditional_gcode(self, cmd):
         # A "traditional" g-code command is a letter and followed by a number
@@ -185,6 +194,7 @@ class GCodeDispatch:
                 del self.ready_gcode_handlers[cmd]
             if cmd in self.base_gcode_handlers:
                 del self.base_gcode_handlers[cmd]
+            self._build_status_commands()
             return old_cmd
         if cmd in self.ready_gcode_handlers:
             raise self.printer.config_error(
@@ -201,6 +211,7 @@ class GCodeDispatch:
             self.base_gcode_handlers[cmd] = func
         if desc is not None:
             self.gcode_help[cmd] = desc
+        self._build_status_commands()
 
     def register_mux_command(self, cmd, key, value, func, desc=None):
         prev = self.mux_commands.get(cmd)
@@ -227,6 +238,16 @@ class GCodeDispatch:
     def get_command_help(self):
         return dict(self.gcode_help)
 
+    def get_status(self, eventtime):
+        return {"commands": self.status_commands}
+
+    def _build_status_commands(self):
+        commands = {cmd: {} for cmd in self.gcode_handlers}
+        for cmd in self.gcode_help:
+            if cmd in commands:
+                commands[cmd]["help"] = self.gcode_help[cmd]
+        self.status_commands = commands
+
     def register_output_handler(self, cb):
         self.output_callbacks.append(cb)
 
@@ -235,6 +256,7 @@ class GCodeDispatch:
             return
         self.is_printer_ready = False
         self.gcode_handlers = self.base_gcode_handlers
+        self._build_status_commands()
         self._respond_state("Shutdown")
 
     def _handle_disconnect(self):
@@ -243,6 +265,7 @@ class GCodeDispatch:
     def _handle_ready(self):
         self.is_printer_ready = True
         self.gcode_handlers = self.ready_gcode_handlers
+        self._build_status_commands()
         self._respond_state("Ready")
 
     # Parse input into commands
@@ -291,8 +314,11 @@ class GCodeDispatch:
         self._process_commands(script.split("\n"), need_ack=False)
 
     def run_script(self, script):
-        with self.mutex:
+        if "INTERRUPT" in script:
             self._process_commands(script.split("\n"), need_ack=False)
+        else:
+            with self.mutex:
+                self._process_commands(script.split("\n"), need_ack=False)
 
     def get_mutex(self):
         return self.mutex
@@ -459,6 +485,9 @@ class GCodeDispatch:
             if cmd in self.gcode_help:
                 cmdhelp.append("%-10s: %s" % (cmd, self.gcode_help[cmd]))
         gcmd.respond_info("\n".join(cmdhelp), log=False)
+
+    def cmd_HEATER_INTERRUPT(self, gcmd):
+        self.increment_interrupt_counter()
 
 
 # Support reading gcode from a pseudo-tty interface

@@ -5,6 +5,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license
 import logging, socket, os, sys, errno, json, collections
 import gcode
+from extras.danger_options import get_danger_options
 
 REQUEST_LOG_SIZE = 20
 
@@ -294,8 +295,14 @@ class ClientConnection:
         self.send(result)
 
     def send(self, data):
-        jmsg = json.dumps(data, separators=(",", ":"))
-        self.send_buffer += jmsg.encode() + b"\x03"
+        try:
+            jmsg = json.dumps(data, separators=(",", ":"))
+            self.send_buffer += jmsg.encode() + b"\x03"
+        except (TypeError, ValueError) as e:
+            msg = "json encoding error: %s" % (str(e),)
+            logging.exception(msg)
+            self.printer.invoke_shutdown(msg)
+            return
         if not self.is_blocking:
             self._do_send()
 
@@ -385,6 +392,9 @@ class WebHooks:
             "hostname": socket.gethostname(),
             "klipper_path": klipper_path,
             "python_path": sys.executable,
+            "process_id": os.getpid(),
+            "user_id": os.getuid(),
+            "group_id": os.getgid(),
         }
         start_args = self.printer.get_start_args()
         for sa in ["log_file", "config_file", "software_version", "cpu_info"]:
@@ -398,10 +408,11 @@ class WebHooks:
         template = web_request.get_dict("response_template")
         method = web_request.get_str("remote_method")
         new_conn = web_request.get_client_connection()
-        logging.info(
-            "webhooks: registering remote method '%s' "
-            "for connection id: %d" % (method, id(new_conn))
-        )
+        if get_danger_options().log_webhook_method_register_messages:
+            logging.info(
+                "webhooks: registering remote method '%s' "
+                "for connection id: %d" % (method, id(new_conn))
+            )
         self._remote_methods.setdefault(method, {})[new_conn] = template
 
     def get_connection(self):

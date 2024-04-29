@@ -37,6 +37,7 @@ SOURCE_FILES = [
     "kin_winch.c",
     "kin_extruder.c",
     "kin_shaper.c",
+    "kin_idex.c",
 ]
 DEST_LIB = "c_helper.so"
 OTHER_FILES = [
@@ -70,6 +71,8 @@ defs_stepcompress = """
         , uint64_t clock);
     int stepcompress_queue_msg(struct stepcompress *sc
         , uint32_t *data, int len);
+    int stepcompress_queue_mq_msg(struct stepcompress *sc, uint64_t req_clock
+        , uint32_t *data, int len);
     int stepcompress_extract_old(struct stepcompress *sc
         , struct pull_history_steps *p, int max
         , uint64_t start_clock, uint64_t end_clock);
@@ -79,7 +82,8 @@ defs_stepcompress = """
     void steppersync_free(struct steppersync *ss);
     void steppersync_set_time(struct steppersync *ss
         , double time_offset, double mcu_freq);
-    int steppersync_flush(struct steppersync *ss, uint64_t move_clock);
+    int steppersync_flush(struct steppersync *ss, uint64_t move_clock
+        , uint64_t clear_history_clock);
 """
 
 defs_itersolve = """
@@ -106,14 +110,15 @@ defs_trapq = """
         double x_r, y_r, z_r;
     };
 
+    struct trapq *trapq_alloc(void);
+    void trapq_free(struct trapq *tq);
     void trapq_append(struct trapq *tq, double print_time
         , double accel_t, double cruise_t, double decel_t
         , double start_pos_x, double start_pos_y, double start_pos_z
         , double axes_r_x, double axes_r_y, double axes_r_z
         , double start_v, double cruise_v, double accel);
-    struct trapq *trapq_alloc(void);
-    void trapq_free(struct trapq *tq);
-    void trapq_finalize_moves(struct trapq *tq, double print_time);
+    void trapq_finalize_moves(struct trapq *tq, double print_time
+        , double clear_history_time);
     void trapq_set_position(struct trapq *tq, double print_time
         , double pos_x, double pos_y, double pos_z);
     int trapq_extract_old(struct trapq *tq, struct pull_move *p, int max
@@ -122,7 +127,6 @@ defs_trapq = """
 
 defs_kin_cartesian = """
     struct stepper_kinematics *cartesian_stepper_alloc(char axis);
-    struct stepper_kinematics *cartesian_reverse_stepper_alloc(char axis);
 """
 
 defs_kin_corexy = """
@@ -165,13 +169,21 @@ defs_kin_extruder = """
 """
 
 defs_kin_shaper = """
-    double input_shaper_get_step_generation_window(int n, double a[]
-        , double t[]);
+    double input_shaper_get_step_generation_window(
+        struct stepper_kinematics *sk);
     int input_shaper_set_shaper_params(struct stepper_kinematics *sk, char axis
         , int n, double a[], double t[]);
     int input_shaper_set_sk(struct stepper_kinematics *sk
         , struct stepper_kinematics *orig_sk);
     struct stepper_kinematics * input_shaper_alloc(void);
+"""
+
+defs_kin_idex = """
+    void dual_carriage_set_sk(struct stepper_kinematics *sk
+        , struct stepper_kinematics *orig_sk);
+    int dual_carriage_set_transform(struct stepper_kinematics *sk
+        , char axis, double scale, double offs);
+    struct stepper_kinematics * dual_carriage_alloc(void);
 """
 
 defs_serialqueue = """
@@ -245,7 +257,9 @@ defs_all = [
     defs_kin_winch,
     defs_kin_extruder,
     defs_kin_shaper,
+    defs_kin_idex,
 ]
+
 
 # Update filenames to an absolute path
 def get_abs_files(srcdir, filelist):
@@ -293,6 +307,7 @@ def do_build_code(cmd):
 FFI_main = None
 FFI_lib = None
 pyhelper_logging_callback = None
+
 
 # Hepler invoked from C errorf() code to log errors
 def logging_callback(msg):
