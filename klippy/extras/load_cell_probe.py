@@ -11,9 +11,6 @@ import mathutil
 # Configuration constants #
 ###########################
 
-# Speed used for all movements; "as fast as possible"
-SPEED = 500.0
-
 # Lift distance for compensation measurement (relative to fit step size)
 COMPENSATION_Z_LIFT_FACTOR = 40
 
@@ -83,6 +80,9 @@ class LoadCellProbe:
         self._noise_level = config.getfloat(
             "noise_level", above=0.0, default=1e-3
         )
+
+        self.speed = config.getfloat("speed", 5.0, above=0.0)
+        self.lift_speed = config.getfloat("lift_speed", self.speed, above=0.0)
 
         # From stepper_z section: Distance for one full step
         cfg_stepper_z = config.getsection("stepper_z")
@@ -195,11 +195,6 @@ class LoadCellProbe:
     cmd_LCP_CALIB_WEIGHT_help = "Calibrate to physical weight unit."
     cmd_LCP_CALIB_STIFFNESS_help = "Calibrate system stiffness."
     cmd_LCP_INFO_help = "Print load cell probe parameters to console."
-
-    def get_lift_speed(self, gcmd=None):
-        if gcmd is not None:
-            return gcmd.get_float("LIFT_SPEED", SPEED, above=0.0)
-        return SPEED
 
     def get_offsets(self):
         return 0, 0, 0
@@ -436,7 +431,6 @@ class LoadCellProbe:
         return self._calc_mean(z_sorted[middle - 1 : middle + 1])
 
     def cmd_PROBE_ACCURACY(self, gcmd):
-        lift_speed = self.get_lift_speed(gcmd)
         sample_count = gcmd.get_int("SAMPLES", 10, minval=1)
         sample_retract_dist = gcmd.get_float(
             "SAMPLE_RETRACT_DIST", 2.0, above=0.0
@@ -453,7 +447,7 @@ class LoadCellProbe:
                 pos[2],
                 sample_count,
                 sample_retract_dist,
-                lift_speed,
+                self.lift_speed,
             )
         )
         # Probe bed sample_count times
@@ -492,7 +486,7 @@ class LoadCellProbe:
         )
 
         pos = self.run_probe(gcmd)
-        self.tool.manual_move([pos[0], pos[1], pos[2]], SPEED)
+        self.tool.manual_move([pos[0], pos[1], pos[2]], self.speed)
         self.tool.wait_moves()
 
     def cmd_LCP_READ(self, gcmd):
@@ -623,7 +617,7 @@ class LoadCellProbe:
         gcmd.respond_info("max_abs_force = %f" % self._max_abs_force)
         gcmd.respond_info("force_calibration = %f" % self._force_calibration)
         gcmd.respond_info("stiffness = %f" % self._stiffness)
-        gcmd.respond_info("noise_level = %f" % self.noise_level)
+        gcmd.respond_info("noise_level = %f" % self._noise_level)
         gcmd.respond_info("Derived parameters:")
         gcmd.respond_info("threshold = %f" % self._threshold)
         gcmd.respond_info("step_size = %f" % self._step_size)

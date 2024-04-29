@@ -2501,6 +2501,12 @@ adc_rate:
 max_abs_force:
 #   Maximum absolute value of measured force (in chosen unit), if exceeded
 #   printer will shutdown immediately.
+#speed: 5.0
+#   Speed (in mm/s) of the Z axis when probing. The default is 5mm/s.
+#lift_speed:
+#   Speed (in mm/s) of the Z axis when lifting the probe between
+#   samples. The default is to use the same value as the 'speed'
+#   parameter.
 #
 # Parameters determined by semi-automatic procedure described in the
 # load-cell probe guide.
