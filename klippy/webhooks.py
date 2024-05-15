@@ -295,6 +295,7 @@ class ClientConnection:
         self.send(result)
 
     def send(self, data):
+        logging.info(f"data debug: {data}")
         try:
             jmsg = json.dumps(data, separators=(",", ":"))
             self.send_buffer += jmsg.encode() + b"\x03"
