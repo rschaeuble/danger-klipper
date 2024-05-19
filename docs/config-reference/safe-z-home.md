@@ -1,0 +1,32 @@
+# Configuration reference
+
+## Customized homing
+
+### [safe_z_home]
+
+Safe Z homing. One may use this mechanism to home the Z axis at a
+specific X, Y coordinate. This is useful if the toolhead, for example
+has to move to the center of the bed before Z can be homed.
+
+```
+[safe_z_home]
+home_xy_position:
+#   A X, Y coordinate (e.g. 100, 100) where the Z homing should be
+#   performed. This parameter must be provided.
+#speed: 50.0
+#   Speed at which the toolhead is moved to the safe Z home
+#   coordinate. The default is 50 mm/s
+#z_hop:
+#   Distance (in mm) to lift the Z axis prior to homing. This is
+#   applied to any homing command, even if it doesn't home the Z axis.
+#   If the Z axis is already homed and the current Z position is less
+#   than z_hop, then this will lift the head to a height of z_hop. If
+#   the Z axis is not already homed the head is lifted by z_hop.
+#   The default is to not implement Z hop.
+#z_hop_speed: 15.0
+#   Speed (in mm/s) at which the Z axis is lifted prior to homing. The
+#   default is 15 mm/s.
+#move_to_previous: False
+#   When set to True, the X and Y axes are reset to their previous
+#   positions after Z axis homing. The default is False.
+```
