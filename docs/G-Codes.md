@@ -1522,9 +1522,9 @@ description of each parameter.
 [SCALE=<0:1>]`: change the per-axis limits.
 
 This command is only available when `kinematics` is set to either
-[`limited_cartesian`](./Config_Reference.md#⚠️-cartesian-kinematics-with-limits-for-x-and-y-axes)
+[`limited_cartesian`](./Config_Reference.md#cartesian-kinematics-with-limits-for-x-and-y-axes)
 or
-[`limited_corexy`](./Config_Reference.md#⚠️-corexy-kinematics-with-limits-for-x-and-y-axes).
+[`limited_corexy`](./Config_Reference.md#corexy-kinematics-with-limits-for-x-and-y-axes).
 The velocity argument is not available on CoreXY. With no arguments, this
 command responds with the movement direction with the most acceleration or
 velocity.
@@ -1578,7 +1578,7 @@ for details on the difference between lanes and tools and how they
 relate to each other.
 
 #### T0, T1, T2, etc.
-`T<tool index>`: Equivalent to calling 
+`T<tool index>`: Equivalent to calling
 `TR_LOAD_TOOLHEAD TOOL=<tool index>`. All of the optional parameters
 accepted by the TR_LOAD_TOOLHEAD command can also be used with these
 commands.

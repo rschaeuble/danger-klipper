@@ -332,7 +332,7 @@ understands it).
 
 The following information is available in
 [mcu](Config_Reference.md#mcu) and
-[mcu some_name](Config_Reference.md#mcu-my_extra_mcu) objects:
+[mcu some_name](config-reference/mcu.md#mcu-my_extra_mcu) objects:
 - `mcu_version`: The Klipper code version reported by the
   micro-controller.
 - `mcu_build_versions`: Information on the build tools used to
@@ -478,13 +478,13 @@ The following information is available in the `system_stats` object
 
 The following information is available in
 
-[bme280 config_section_name](Config_Reference.md#bmp280bme280bme680-temperature-sensor),
-[htu21d config_section_name](Config_Reference.md#htu21d-sensor),
-[sht3x config_section_name](Config_Reference.md#sht31-sensor),
-[lm75 config_section_name](Config_Reference.md#lm75-temperature-sensor),
-[temperature_host config_section_name](Config_Reference.md#host-temperature-sensor)
+[bme280 config_section_name](Temperature_Sensors.md#bmp180bmp280bme280bmp388bme680-temperature-sensor),
+[htu21d config_section_name](Temperature_Sensors.md#htu21d-sensor),
+[sht3x config_section_name](Temperature_Sensors.md#sht3x-sensor),
+[lm75 config_section_name](Temperature_Sensors.md#lm75-temperature-sensor),
+[temperature_host config_section_name](Temperature_Sensors.md#host-temperature-sensor)
 and
-[temperature_combined config_section_name](Config_Reference.md#combined-temperature-sensor)
+[temperature_combined config_section_name](Temperature_Sensors.md#combined-temperature-sensor)
 objects:
 - `temperature`: The last read temperature from the sensor.
 - `humidity`, `pressure`, `gas`: The last read values from the sensor

@@ -1,0 +1,61 @@
+# Configuration reference
+
+## Bed probing hardware
+
+### [bltouch]
+
+BLTouch probe. One may define this section (instead of a probe
+section) to enable a BLTouch probe. See [BL-Touch guide](../BLTouch.md)
+and [command reference](../G-Codes.md#bltouch) for further information. A
+virtual "probe:z_virtual_endstop" pin is also created (see the "probe"
+section for the details).
+
+```
+[bltouch]
+sensor_pin:
+#   Pin connected to the BLTouch sensor pin. Most BLTouch devices
+#   require a pullup on the sensor pin (prefix the pin name with "^").
+#   This parameter must be provided.
+control_pin:
+#   Pin connected to the BLTouch control pin. This parameter must be
+#   provided.
+#pin_move_time: 0.680
+#   The amount of time (in seconds) to wait for the BLTouch pin to
+#   move up or down. The default is 0.680 seconds.
+#stow_on_each_sample: True
+#   This determines if Klipper should command the pin to move up
+#   between each probe attempt when performing a multiple probe
+#   sequence. Read the directions in docs/BLTouch.md before setting
+#   this to False. The default is True.
+#probe_with_touch_mode: False
+#   If this is set to True then Klipper will probe with the device in
+#   "touch_mode". The default is False (probing in "pin_down" mode).
+#pin_up_reports_not_triggered: True
+#   Set if the BLTouch consistently reports the probe in a "not
+#   triggered" state after a successful "pin_up" command. This should
+#   be True for all genuine BLTouch devices. Read the directions in
+#   docs/BLTouch.md before setting this to False. The default is True.
+#pin_up_touch_mode_reports_triggered: True
+#   Set if the BLTouch consistently reports a "triggered" state after
+#   the commands "pin_up" followed by "touch_mode". This should be
+#   True for all genuine BLTouch devices. Read the directions in
+#   docs/BLTouch.md before setting this to False. The default is True.
+#set_output_mode:
+#   Request a specific sensor pin output mode on the BLTouch V3.0 (and
+#   later). This setting should not be used on other types of probes.
+#   Set to "5V" to request a sensor pin output of 5 Volts (only use if
+#   the controller board needs 5V mode and is 5V tolerant on its input
+#   signal line). Set to "OD" to request the sensor pin output use
+#   open drain mode. The default is to not request an output mode.
+#x_offset:
+#y_offset:
+#z_offset:
+#speed:
+#lift_speed:
+#samples:
+#sample_retract_dist:
+#samples_result:
+#samples_tolerance:
+#samples_tolerance_retries:
+#   See the "probe" section for information on these parameters.
+```

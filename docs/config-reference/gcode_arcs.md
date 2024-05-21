@@ -1,0 +1,17 @@
+# Configuration reference
+
+## Optional G-Code features
+
+### [gcode_arcs]
+
+Support for gcode arc (G2/G3) commands.
+
+```
+[gcode_arcs]
+#resolution: 1.0
+#   An arc will be split into segments. Each segment's length will
+#   equal the resolution in mm set above. Lower values will produce a
+#   finer arc, but also more work for your machine. Arcs smaller than
+#   the configured value will become straight lines. The default is
+#   1mm.
+```
